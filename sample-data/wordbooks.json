@@ -1,0 +1,51 @@
+[
+  {
+    "id": "book:foundation-demo",
+    "name": "Foundation Demo",
+    "targetType": "GENERAL",
+    "difficulty": "A1-A2",
+    "estimatedWordCount": 24,
+    "sourceDescription": "项目演示元数据，不代表完整商业词书",
+    "hasImportedWords": true,
+    "recommendationTags": ["基础", "核心"],
+    "isFoundation": true,
+    "isTargetBook": false,
+    "overlapNote": "与 CET4 Core Demo 存在部分基础词重合"
+  },
+  {
+    "id": "book:cet4-core-demo",
+    "name": "CET4 Core Demo",
+    "targetType": "CET4",
+    "difficulty": "A2-B1",
+    "estimatedWordCount": 24,
+    "sourceDescription": "项目演示词书元数据与少量通用词",
+    "hasImportedWords": true,
+    "recommendationTags": ["四级", "核心", "高频"],
+    "isFoundation": false,
+    "isTargetBook": true
+  },
+  {
+    "id": "book:cet6-bridge-demo",
+    "name": "CET6 Bridge Demo",
+    "targetType": "CET6",
+    "difficulty": "B1-B2",
+    "estimatedWordCount": 16,
+    "sourceDescription": "项目演示词书元数据与少量通用词",
+    "hasImportedWords": true,
+    "recommendationTags": ["六级", "强化"],
+    "isFoundation": false,
+    "isTargetBook": true
+  },
+  {
+    "id": "book:ielts-core-demo",
+    "name": "IELTS Core Demo",
+    "targetType": "IELTS",
+    "difficulty": "B2",
+    "estimatedWordCount": 16,
+    "sourceDescription": "项目演示词书元数据与少量通用词",
+    "hasImportedWords": true,
+    "recommendationTags": ["雅思", "核心", "学术"],
+    "isFoundation": false,
+    "isTargetBook": true
+  }
+]
