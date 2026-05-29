@@ -1,0 +1,42 @@
+{
+  "schemaVersion": 1,
+  "exportedAt": "2026-05-26T14:30:00.000Z",
+  "goals": [
+    {
+      "id": "goal:demo-backup",
+      "targetType": "CET4",
+      "targetDescription": "演示备份：验证旧目标和完成数量记录恢复",
+      "startDate": "2026-05-26",
+      "deadline": "2026-08-31",
+      "targetVocabularyCount": 72,
+      "currentEstimatedVocabulary": 1500,
+      "dailyNewWordLimit": 20,
+      "dailyReviewLimit": 80,
+      "studyDaysPerWeek": 6,
+      "restWeekdays": [0],
+      "bufferDayRatio": 0.1,
+      "planStyle": "steady",
+      "selectedBookIds": ["book:foundation-demo", "book:cet4-core-demo"],
+      "createdAt": "2026-05-26T14:30:00.000Z",
+      "updatedAt": "2026-05-26T14:30:00.000Z"
+    }
+  ],
+  "wordBooks": [],
+  "words": [],
+  "studyPlans": [],
+  "dailyTasks": [],
+  "reviewTasks": [],
+  "progressRecords": [
+    {
+      "id": "progress:goal:demo-backup:2026-05-26",
+      "goalId": "goal:demo-backup",
+      "date": "2026-05-26",
+      "newWordsCompleted": 12,
+      "reviewsCompleted": 0,
+      "minutesSpent": 35,
+      "note": "演示完成记录",
+      "createdAt": "2026-05-26T14:30:00.000Z"
+    }
+  ],
+  "adjustmentLogs": []
+}

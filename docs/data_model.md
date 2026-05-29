@@ -1,162 +1,84 @@
-# 数据模型设计
+# 数据模型：v0.2.1
 
-## 日期约定
+## 核心数量
 
-系统统一使用 `YYYY-MM-DD` 日期字符串表示本地学习日。算法只处理日期字符串，不依赖运行环境的时区时刻，避免跨天造成任务错乱。项目默认解释为 Asia/Shanghai 的自然日。
+- `targetRequiredCount`：用户目标需求量，不因库存不足或学习欠缺自动减少。
+- `availableWordCount`：当前数据库中符合目标范围的真实去重单词数。
+- `assignedWordCount`：已经绑定到具体单词并进入每日安排或学习状态的数量。
+- `completedWordCount`：用户实际完成新学的具体单词数量。
 
-## UserGoal
+## 两类缺口
 
-用户学习目标。动态调整不得静默修改其中的总目标、截止日期和用户选择范围。
+- `inventoryGapCount`：目标需求量超过当前真实词库供给的部分。它不是用户未完成任务。
+- `learningBacklogCount`：已经分配了具体单词，但用户跳过、未完成或逾期未学的部分。
 
-字段：
+## 主要实体
 
-- `id`：目标 ID。
-- `targetType`：CET-4、CET-6、POSTGRAD、IELTS、TOEFL、GRE 或 CUSTOM。
-- `targetDescription`：目标说明。
-- `startDate`：计划开始日期。
-- `deadline`：最终截止日期。
-- `targetVocabularyCount`：总目标新学词数。
-- `currentEstimatedVocabulary`：自评词汇量。
-- `dailyNewWordLimit`：每日新学上限。
-- `dailyReviewLimit`：每日复习上限。
-- `studyDaysPerWeek`：每周学习天数。
-- `restWeekdays`：固定休息日，0 表示周日，6 表示周六。
-- `bufferDayRatio`：缓冲日比例。
-- `planStyle`：`steady`、`frontLoaded` 或 `flexible`。
-- `selectedBookIds`：纳入目标的词书范围。
-- `createdAt`、`updatedAt`：更新时间。
+### LearningGoal
 
-## WordBook
+保存目标输入方式、自然语言原文、解释后的目标、目标类型、目标需求词量、开始日期、截止日期、每日新词上限、每日复习上限、休息日、缓冲日比例、计划类型、计划时区和词书范围。
 
-词书元数据，不包含未经许可的商业词书全文。
+### WordItem
 
-字段：
+导入后的真实词条。以 `normalizedWord` 去重，一个单词可包含多个 `sourceBookIds` 和 `sourceBookNames`。
 
-- `id`
-- `name`
-- `targetType`
-- `difficulty`
-- `estimatedWordCount`
-- `sourceDescription`
-- `hasImportedWords`
-- `recommendationTags`
-- `isFoundation`
-- `isTargetBook`
-- `overlapNote`
+### WordProgress
 
-## WordItem
+每个具体单词的学习状态：
 
-导入后的单词。去重以 `normalizedWord` 为准，同一单词可保留多个 `sourceBookIds`。
+- `not_started`
+- `assigned_new`
+- `learning_backlog`
+- `learned`
+- `reviewing`
+- `mastered`
+- `excluded`
 
-字段：
+同时保存首次分配日期、首次学习日期、最近复习日期、下一次复习日期、复习阶段、遗忘次数和来源词书。
 
-- `id`
-- `word`
-- `normalizedWord`
-- `meaning`
-- `sourceBookIds`
-- `sourceBookNames`
-- `level`
-- `tags`
-- `status`：`new`、`known`、`excluded`、`learning`、`mastered`。
-- `createdAt`、`updatedAt`
+### DailyNewWordAssignment
 
-## StudyPlan
+每日新词任务，必须绑定 `wordId`。状态包括 `planned`、`learned`、`mastered`、`skipped`、`missed`、`rescheduled`。
 
-计划版本摘要。
+### DailyReviewAssignment
 
-字段：
+每日复习任务，必须绑定 `wordId` 和 `reviewStage`。状态包括 `planned`、`completed`、`overdue`、`rescheduled`；结果包括 `forgot`、`vague`、`known`、`easy`、`not_completed`。
 
-- `id`
-- `goalId`
-- `generatedAt`
-- `version`
-- `feasibilityStatus`：`feasible`、`atRisk`、`infeasible`、`completed`。
-- `remainingNewWords`
-- `remainingEffectiveDays`
-- `requiredDailyAverage`
-- `dailyLimitGap`
-- `adjustmentReason`
+### PlanCoverageStatus
 
-## DailyTask
+计划覆盖快照，包含目标需求量、可供给量、已绑定量、实际完成量、库存缺口、学习欠缺和逾期复习。
 
-每日任务。历史日期的实际完成记录不被未来重排覆盖。
+### PlanAdjustmentLog
 
-字段：
+记录触发原因、调整前后覆盖快照、受影响日期和解释。用于说明库存补足、用户未完成、复习逾期或 AI 建议应用后的重排原因。
 
-- `id`
-- `goalId`
-- `planId`
-- `date`
-- `plannedNewWordCount`
-- `plannedReviewCount`
-- `actualNewWordCount`
-- `actualReviewCount`
-- `missedNewWordCount`
-- `missedReviewCount`
-- `completionStatus`：`planned`、`completed`、`partial`、`missed`、`rest`。
-- `isBufferDay`
-- `isRestDay`
-- `sourceBookNames`
-- `adjustmentReason`
+## Dexie v2 表
 
-## ReviewTask
-
-第一版以数量调度为主，保留复习任务实体以支持后续扩展到单词级复习。
-
-字段：
-
-- `id`
-- `wordId`
-- `dueDate`
-- `reviewStage`
-- `result`
-- `completedAt`
-- `rescheduledFrom`
-
-## ProgressRecord
-
-用户每日填写的完成记录，是动态重排的事实来源。
-
-字段：
-
-- `id`
-- `goalId`
-- `date`
-- `newWordsCompleted`
-- `reviewsCompleted`
-- `minutesSpent`
-- `note`
-- `createdAt`
-
-## PlanAdjustmentLog
-
-每次生成或重排计划时记录原因，便于解释。
-
-字段：
-
-- `id`
-- `createdAt`
-- `triggerType`：`initial`、`dailyRecord`、`settingsChange`、`import`、`manual`。
-- `previousPlanVersion`
-- `newPlanVersion`
-- `reason`
-- `changesSummary`
-- `feasibilityStatus`
-
-## BackupData
-
-导出的备份包含：
-
-- `schemaVersion`
-- `exportedAt`
 - `goals`
 - `wordBooks`
 - `words`
+- `wordProgress`
 - `studyPlans`
 - `dailyTasks`
-- `reviewTasks`
-- `progressRecords`
+- `dailyNewAssignments`
+- `dailyReviewAssignments`
+- `reviewHistory`
+- `legacyProgressRecords`
 - `adjustmentLogs`
 
-导入备份时必须校验基础结构；失败时展示明确错误，而不是静默丢弃数据。
+## 迁移策略
+
+v0.1.0 的 `targetVocabularyCount` 迁移为 `targetRequiredCount`。旧 `WordItem.status` 不再作为具体学习事实使用。旧 `progressRecords` 只有数量，无法证明用户过去具体学了哪些词，因此迁移为 `legacyProgressRecords`，并标注“v0.1.0 历史数量记录”，不伪造具体单词历史。
+
+## 备份策略
+
+v0.2.1 备份使用：
+
+```json
+{
+  "schemaVersion": 2,
+  "backupVersion": "v0.2.1"
+}
+```
+
+导入时支持识别 v0.1.0、v0.2.0 和 v0.2.1。v0.1.0 会转换为当前结构并保留旧数量记录。

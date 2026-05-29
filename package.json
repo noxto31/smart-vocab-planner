@@ -1,6 +1,6 @@
 {
   "name": "vocabulary-smart-planner",
-  "version": "0.1.0",
+  "version": "0.2.1",
   "private": true,
   "type": "module",
   "scripts": {
@@ -19,6 +19,7 @@
   "devDependencies": {
     "@types/react": "^19.2.7",
     "@types/react-dom": "^19.2.3",
+    "fake-indexeddb": "^6.2.5",
     "typescript": "^5.9.3",
     "vitest": "^4.0.14"
   }

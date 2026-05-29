@@ -38,9 +38,9 @@ export function recommendBooks(goal: UserGoal | null, books: WordBook[], importe
         score += 1;
         reasons.push("可作为通用基础补充");
       }
-      if ((goal.currentEstimatedVocabulary ?? 0) < Math.max(1200, goal.targetVocabularyCount * 0.45) && book.isFoundation) {
+      if (goal.targetRequiredCount >= 800 && book.isFoundation) {
         score += 3;
-        reasons.push("当前基础偏低，适合作为基础词汇补齐");
+        reasons.push("目标词量较高，适合作为基础词汇补齐");
       }
       if (book.isTargetBook) {
         score += 2;

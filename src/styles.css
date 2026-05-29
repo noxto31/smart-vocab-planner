@@ -313,11 +313,16 @@ label {
   gap: 10px;
 }
 
+.settle-row {
+  margin-top: 14px;
+}
+
 .task-highlight,
 .info-list,
 .log-list,
 .recommendation-list,
-.daily-list {
+.daily-list,
+.card-list {
   display: grid;
   gap: 10px;
 }
@@ -399,17 +404,25 @@ th {
 }
 
 .recommendation-list article,
-.log-list article {
+.log-list article,
+.word-card,
+.suggestion-box {
   border: 1px solid #e4ebe8;
   border-radius: 8px;
   padding: 12px;
+}
+
+.suggestion-box {
+  background: #f7faf8;
+  margin-top: 12px;
 }
 
 .recommendation-list strong,
 .recommendation-list span,
 .recommendation-list p,
 .log-list strong,
-.log-list span {
+.log-list span,
+.log-list small {
   display: block;
 }
 
@@ -421,6 +434,35 @@ th {
 
 .recommendation-list p {
   margin: 8px 0 0;
+}
+
+.word-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+}
+
+.word-card strong,
+.word-card p,
+.word-card small {
+  display: block;
+}
+
+.word-card p {
+  margin: 6px 0;
+}
+
+.word-card small,
+.muted {
+  color: #64746f;
+}
+
+.button-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
 }
 
 .import-tools {
@@ -464,6 +506,14 @@ th {
 
   .daily-row {
     grid-template-columns: 1fr 1fr;
+  }
+
+  .word-card {
+    grid-template-columns: 1fr;
+  }
+
+  .button-strip {
+    justify-content: flex-start;
   }
 }
 
