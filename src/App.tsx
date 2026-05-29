@@ -82,6 +82,7 @@ function App() {
   const [goalForm, setGoalForm] = useState<UserGoal>(() => createDefaultGoal());
   const [naturalGoalText, setNaturalGoalText] = useState("");
   const [aiSuggestion, setAiSuggestion] = useState<AIPlanningSuggestion | null>(null);
+  const [pendingAppliedAdviceId, setPendingAppliedAdviceId] = useState<string | undefined>(undefined);
   const [importFormat, setImportFormat] = useState<"csv" | "json">("csv");
   const [importText, setImportText] = useState("");
   const [backupText, setBackupText] = useState("");
@@ -156,9 +157,11 @@ function App() {
   const handleGoalSubmit = async (event: FormEvent) => {
     event.preventDefault();
     await runAction(async () => {
-      const savedGoal = await saveGoal({ ...goalForm, updatedAt: nowIso() });
+      const appliedAdviceId = pendingAppliedAdviceId;
+      const savedGoal = await saveGoal({ ...goalForm, updatedAt: nowIso() }, { appliedAdviceId });
       const asOfDate = compareDates(savedGoal.startDate, today) > 0 ? savedGoal.startDate : todayInTimezone(savedGoal.timezone);
       await generateAndSavePlan(savedGoal, asOfDate, currentGoal ? "goal_change" : "initial", "保存目标后生成 v0.3.0 具体单词计划");
+      setPendingAppliedAdviceId(undefined);
     }, "目标已保存，具体单词计划已生成");
   };
 
@@ -186,6 +189,7 @@ function App() {
       aiPlanningEnabled: true,
       updatedAt: nowIso()
     });
+    setPendingAppliedAdviceId(aiSuggestion.id);
     setMessage("AI 建议已填入表单，需点击“保存并生成计划”后才会改变执行目标");
   };
 
@@ -257,7 +261,7 @@ function App() {
           <span className="brand-mark">VSP</span>
           <div>
             <strong>智能背词主流程</strong>
-            <small>v0.2.1 本地离线</small>
+            <small>v0.3.0 本地离线</small>
           </div>
         </div>
         <nav className="nav-list" aria-label="主导航">
@@ -288,6 +292,7 @@ function App() {
             <div className="metric-grid">
               <MetricCard label="目标需求词量" value={latestPlan?.coverage.targetRequiredCount ?? currentGoal?.targetRequiredCount ?? 0} />
               <MetricCard label="词库可供给" value={latestPlan?.coverage.availableWordCount ?? data?.words.length ?? 0} />
+              <MetricCard label="已启用词量" value={latestPlan?.coverage.enabledWordCount ?? 0} />
               <MetricCard label="词库供给缺口" value={latestPlan?.coverage.inventoryGapCount ?? 0} />
               <MetricCard label="已完成具体新词" value={latestPlan?.coverage.completedWordCount ?? 0} />
               <MetricCard label="待补学具体词" value={latestPlan?.coverage.learningBacklogCount ?? 0} />
@@ -533,6 +538,7 @@ function App() {
                 <dl className="info-list">
                   <div><dt>目标需求量</dt><dd>{latestPlan.coverage.targetRequiredCount}</dd></div>
                   <div><dt>可供给词量</dt><dd>{latestPlan.coverage.availableWordCount}</dd></div>
+                  <div><dt>已启用词量</dt><dd>{latestPlan.coverage.enabledWordCount}</dd></div>
                   <div><dt>已绑定计划量</dt><dd>{latestPlan.coverage.assignedWordCount}</dd></div>
                   <div><dt>实际完成量</dt><dd>{latestPlan.coverage.completedWordCount}</dd></div>
                   <div><dt>复习中词量</dt><dd>{latestPlan.coverage.reviewingWordCount}</dd></div>

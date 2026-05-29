@@ -43,8 +43,33 @@ describe("v0.3.0 智能背词 Beta 验收", () => {
       interpretedGoal: suggestion.interpretedGoal,
       targetType: suggestion.targetType,
       targetRequiredCount: suggestion.suggestedTargetWordCount
+    }, { appliedAdviceId: suggestion.id });
+    expect(await db.aiAdviceApplications.count()).toBe(1);
+
+    await saveGoal({
+      ...goal,
+      goalInputMode: "natural_language",
+      interpretedGoal: "手动调整每日容量",
+      dailyNewWordLimit: 12
+    });
+    await saveGoal({
+      ...goal,
+      goalInputMode: "natural_language",
+      interpretedGoal: "再次手动调整期限",
+      deadline: addDays(goal.deadline, 7)
     });
     expect(await db.aiAdviceApplications.count()).toBe(1);
+
+    const secondSuggestion = await analyzeNaturalLanguageGoal("之后想准备雅思，希望先慢慢补基础。");
+    await saveGoal({
+      ...goal,
+      goalInputMode: "natural_language",
+      originalGoalText: "之后想准备雅思，希望先慢慢补基础。",
+      interpretedGoal: secondSuggestion.interpretedGoal,
+      targetType: secondSuggestion.targetType,
+      targetRequiredCount: secondSuggestion.suggestedTargetWordCount
+    }, { appliedAdviceId: secondSuggestion.id });
+    expect(await db.aiAdviceApplications.count()).toBe(2);
   });
 
   it("保存目标和生成计划会写入目标版本、阶段计划、周度复盘和月度复盘", async () => {
@@ -59,6 +84,76 @@ describe("v0.3.0 智能背词 Beta 验收", () => {
     const plan = await db.studyPlans.orderBy("version").last();
     expect(plan?.coverage.enabledWordCount).toBe(40);
     expect(plan?.coverage.reviewingWordCount).toBe(0);
+  });
+
+  it("availableWordCount 统计全部可用词，enabledWordCount 只统计当前启用范围", async () => {
+    const goal = makeGoal({
+      targetRequiredCount: 4,
+      selectedBookIds: ["book:enabled"],
+      dailyNewWordLimit: 10
+    });
+    const words: WordItem[] = [
+      makeWord("able", ["book:enabled"], ["核心"], "core"),
+      makeWord("adapt", ["book:enabled"], ["核心"], "core"),
+      makeWord("beyond", ["book:disabled"], ["扩展"], "extension"),
+      makeWord("create", ["book:disabled"], ["扩展"], "extension"),
+      makeWord("draft", ["book:disabled"], ["扩展"], "extension")
+    ];
+
+    const enabledOnly = generateWordLevelPlan({
+      goal,
+      words,
+      wordProgress: [],
+      existingNewAssignments: [],
+      existingReviewAssignments: [],
+      asOfDate: goal.startDate,
+      version: 1,
+      triggerType: "initial",
+      reason: "测试启用范围"
+    });
+    expect(enabledOnly.plan.coverage.availableWordCount).toBe(5);
+    expect(enabledOnly.plan.coverage.enabledWordCount).toBe(2);
+    expect(enabledOnly.plan.coverage.inventoryGapCount).toBe(2);
+    expect(enabledOnly.newAssignments).toHaveLength(2);
+
+    const expanded = generateWordLevelPlan({
+      goal: { ...goal, selectedBookIds: ["book:enabled", "book:disabled"] },
+      words,
+      wordProgress: [],
+      existingNewAssignments: [],
+      existingReviewAssignments: [],
+      asOfDate: goal.startDate,
+      version: 1,
+      triggerType: "goal_change",
+      reason: "测试修改启用范围"
+    });
+    expect(expanded.plan.coverage.availableWordCount).toBe(5);
+    expect(expanded.plan.coverage.enabledWordCount).toBe(5);
+    expect(expanded.plan.coverage.inventoryGapCount).toBe(0);
+    expect(expanded.newAssignments).toHaveLength(4);
+  });
+
+  it("导入未启用词书只增加 availableWordCount，不改写用户已启用范围", async () => {
+    await importWordText(makeCsvForBook(2, "Enabled Book", 0), "csv");
+    const goal = await saveGoal(makeGoal({
+      targetRequiredCount: 4,
+      selectedBookIds: ["book:enabled-book"],
+      dailyNewWordLimit: 10
+    }));
+    await generateAndSavePlan(goal, goal.startDate, "initial", "初始启用词书计划");
+    let plan = await db.studyPlans.orderBy("version").last();
+    expect(plan?.coverage.availableWordCount).toBe(2);
+    expect(plan?.coverage.enabledWordCount).toBe(2);
+    expect(plan?.coverage.inventoryGapCount).toBe(2);
+
+    await importWordText(makeCsvForBook(3, "Extra Book", 10), "csv");
+    const goalAfterImport = await db.goals.get(goal.id);
+    plan = await db.studyPlans.orderBy("version").last();
+    expect(goalAfterImport?.selectedBookIds).toEqual(["book:enabled-book"]);
+    expect(plan?.coverage.availableWordCount).toBe(5);
+    expect(plan?.coverage.enabledWordCount).toBe(2);
+    expect(plan?.coverage.inventoryGapCount).toBe(2);
+    expect((await db.dailyNewAssignments.toArray()).filter((assignment) => assignment.goalId === goal.id)).toHaveLength(2);
   });
 
   it("词库大于目标时按启用词书与阶段规则选择具体词，不按字母随意截取", () => {
@@ -191,6 +286,13 @@ function makeCsv(count: number): string {
   return [
     "word,meaning,book_name,level,tags",
     ...Array.from({ length: count }, (_, index) => `word${index},测试词${index},Test Book,A1,核心`)
+  ].join("\n");
+}
+
+function makeCsvForBook(count: number, bookName: string, offset: number): string {
+  return [
+    "word,meaning,book_name,level,tags",
+    ...Array.from({ length: count }, (_, index) => `bookword${offset + index},测试词${offset + index},${bookName},A1,核心`)
   ].join("\n");
 }
 

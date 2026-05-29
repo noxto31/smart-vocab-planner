@@ -8,6 +8,7 @@ import {
   applyReviewResult,
   computeCoverageStatus,
   generateWordLevelPlan,
+  selectAvailableWords,
   selectWordsForGoal
 } from "../domain/scheduler";
 import type {
@@ -137,13 +138,13 @@ export async function loadAllData(): Promise<AppDataState> {
   };
 }
 
-export async function saveGoal(goal: UserGoal): Promise<UserGoal> {
+export async function saveGoal(goal: UserGoal, options: { appliedAdviceId?: string } = {}): Promise<UserGoal> {
   const previous = await db.goals.get(goal.id);
   const updatedGoal = { ...goal, updatedAt: nowIso() };
   const version = await buildGoalVersionRecord(previous ?? null, updatedGoal, previous ? "用户修改目标或计划参数" : "创建执行目标");
   const goalWithVersion = { ...updatedGoal, activeGoalVersionId: version.id };
   version.confirmedGoal = goalWithVersion;
-  const adviceApplication = await buildAdviceApplicationRecord(previous ?? null, goalWithVersion);
+  const adviceApplication = await buildAdviceApplicationRecord(options.appliedAdviceId, previous ?? null, goalWithVersion);
   await db.transaction("rw", db.goals, db.goalVersions, db.aiAdviceApplications, async () => {
     await db.goals.put(goalWithVersion);
     await db.goalVersions.put(version);
@@ -254,8 +255,10 @@ export async function generateAndSavePlan(
       db.studyPlans.where("goalId").equals(goal.id).toArray()
     ]);
   const selectedWords = selectWordsForGoal(words, goal, wordProgress);
+  const availableWords = selectAvailableWords(words, wordProgress);
   const beforeSnapshot = computeCoverageStatus(
     goal,
+    availableWords,
     selectedWords,
     wordProgress,
     existingNewAssignments,
@@ -634,6 +637,7 @@ async function getCurrentCoverage(goal: UserGoal) {
   ]);
   return computeCoverageStatus(
     goal,
+    selectAvailableWords(words, progress),
     selectWordsForGoal(words, goal, progress),
     progress,
     newAssignments,
@@ -700,11 +704,11 @@ async function buildGoalVersionRecord(previous: UserGoal | null, next: UserGoal,
   };
 }
 
-async function buildAdviceApplicationRecord(previous: UserGoal | null, next: UserGoal): Promise<AIAdviceApplicationRecord | null> {
-  if (next.goalInputMode !== "natural_language") {
+async function buildAdviceApplicationRecord(adviceId: string | undefined, previous: UserGoal | null, next: UserGoal): Promise<AIAdviceApplicationRecord | null> {
+  if (!adviceId) {
     return null;
   }
-  const advice = await db.aiPlanningAdvices.orderBy("createdAt").reverse().first();
+  const advice = await db.aiPlanningAdvices.get(adviceId);
   if (!advice) {
     return null;
   }
