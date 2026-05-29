@@ -42,6 +42,8 @@ export type AdjustmentTrigger =
   | "initial"
   | "daily_learning_result"
   | "daily_review_result"
+  | "daily_settlement"
+  | "past_due_auto_settlement"
   | "wordbook_import"
   | "goal_change"
   | "ai_suggestion_applied"
@@ -309,7 +311,7 @@ export interface AIPlanningSuggestion {
 
 export interface BackupDataV2 {
   schemaVersion: 2;
-  backupVersion: "v0.2.0";
+  backupVersion: "v0.2.0" | "v0.2.1";
   exportedAt: string;
   goals: LearningGoal[];
   wordBooks: WordBook[];

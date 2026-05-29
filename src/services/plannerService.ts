@@ -51,7 +51,15 @@ export interface ImportServiceResult {
   errors: string[];
 }
 
+export interface DailySettlementResult {
+  date: string;
+  settledNewWordCount: number;
+  settledReviewCount: number;
+  replanned: boolean;
+}
+
 export async function loadAllData(): Promise<AppDataState> {
+  await settlePastOpenTasks();
   const [
     goals,
     wordBooks,
@@ -186,7 +194,8 @@ export async function generateAndSavePlan(
   goal: UserGoal,
   asOfDate: string,
   triggerType: Parameters<typeof generateWordLevelPlan>[0]["triggerType"],
-  reason: string
+  reason: string,
+  preserveOpenDates: string[] = []
 ): Promise<GeneratedPlanResult> {
   const [words, wordProgress, existingNewAssignments, existingReviewAssignments, existingDailyTasks, existingPlans] =
     await Promise.all([
@@ -218,7 +227,8 @@ export async function generateAndSavePlan(
     version: nextVersion,
     triggerType,
     reason,
-    beforeSnapshot
+    beforeSnapshot,
+    preserveOpenDates
   });
 
   await db.transaction(
@@ -266,7 +276,8 @@ export async function recordNewWordAssignmentResult(input: {
       goal,
       addDays(assignment.date, 1),
       "daily_learning_result",
-      `记录 ${assignment.date} 新词任务结果：${input.result}`
+      `记录 ${assignment.date} 单个新词任务结果：${input.result}，同日其他未处理任务保持开放`,
+      [assignment.date]
     );
   }
 }
@@ -298,9 +309,132 @@ export async function recordReviewAssignmentResult(input: {
       goal,
       input.result === "not_completed" ? addDays(assignment.date, 1) : assignment.date,
       "daily_review_result",
-      `记录 ${assignment.date} 复习结果：${input.result}`
+      `记录 ${assignment.date} 单个复习任务结果：${input.result}，同日其他未处理复习保持开放`,
+      [assignment.date]
     );
   }
+}
+
+export async function settleDailyTasks(input: {
+  goalId: string;
+  date: string;
+  mode: "manual" | "auto";
+}): Promise<DailySettlementResult> {
+  const goal = await db.goals.get(input.goalId);
+  if (!goal) {
+    throw new Error("找不到要结算的目标");
+  }
+  const [openNewAssignments, openReviewAssignments] = await Promise.all([
+    db.dailyNewAssignments
+      .where("goalId")
+      .equals(input.goalId)
+      .toArray()
+      .then((items) => items.filter((assignment) => assignment.date === input.date && isOpenNewAssignment(assignment.status))),
+    db.dailyReviewAssignments
+      .where("goalId")
+      .equals(input.goalId)
+      .toArray()
+      .then((items) => items.filter((assignment) => assignment.date === input.date && isOpenReviewAssignment(assignment.status)))
+  ]);
+
+  if (openNewAssignments.length === 0 && openReviewAssignments.length === 0) {
+    return {
+      date: input.date,
+      settledNewWordCount: 0,
+      settledReviewCount: 0,
+      replanned: false
+    };
+  }
+
+  const wordsById = new Map((await db.words.toArray()).map((word) => [word.id, word]));
+  const progressByWord = new Map((await db.wordProgress.toArray()).map((progress) => [progress.wordId, progress]));
+  const newOutputs = openNewAssignments.map((assignment) => {
+    const word = wordsById.get(assignment.wordId);
+    if (!word) {
+      throw new Error(`找不到要结算的新词：${assignment.wordId}`);
+    }
+    return applyNewWordResult({
+      assignment,
+      word,
+      progress: progressByWord.get(assignment.wordId),
+      result: "missed"
+    });
+  });
+  newOutputs.forEach((output) => progressByWord.set(output.progress.wordId, output.progress));
+  const reviewOutputs = openReviewAssignments.map((assignment) => {
+    const progress = progressByWord.get(assignment.wordId);
+    if (!progress) {
+      throw new Error(`找不到要结算的复习词状态：${assignment.wordId}`);
+    }
+    return applyReviewResult({
+      assignment,
+      progress,
+      result: "not_completed"
+    });
+  });
+
+  await db.transaction("rw", db.dailyNewAssignments, db.dailyReviewAssignments, db.wordProgress, db.reviewHistory, async () => {
+    await Promise.all([
+      db.dailyNewAssignments.bulkPut(newOutputs.map((output) => output.assignment)),
+      db.dailyReviewAssignments.bulkPut(reviewOutputs.map((output) => output.assignment)),
+      db.wordProgress.bulkPut([
+        ...newOutputs.map((output) => output.progress),
+        ...reviewOutputs.map((output) => output.progress)
+      ]),
+      reviewOutputs.length > 0 ? db.reviewHistory.bulkPut(reviewOutputs.map((output) => output.reviewRecord)) : Promise.resolve()
+    ]);
+  });
+
+  await generateAndSavePlan(
+    goal,
+    addDays(input.date, 1),
+    input.mode === "manual" ? "daily_settlement" : "past_due_auto_settlement",
+    input.mode === "manual"
+      ? `用户主动结算 ${input.date}：${openNewAssignments.length} 个新词转入待补学，${openReviewAssignments.length} 个复习转为逾期`
+      : `系统跨日自动结算 ${input.date}：${openNewAssignments.length} 个历史新词转入待补学，${openReviewAssignments.length} 个历史复习转为逾期`,
+    input.mode === "auto" ? [addDays(input.date, 1)] : []
+  );
+
+  return {
+    date: input.date,
+    settledNewWordCount: openNewAssignments.length,
+    settledReviewCount: openReviewAssignments.length,
+    replanned: true
+  };
+}
+
+export async function settlePastOpenTasks(input: {
+  goalId?: string;
+  today?: string;
+} = {}): Promise<DailySettlementResult[]> {
+  const goals = input.goalId ? [await db.goals.get(input.goalId)].filter(Boolean) as UserGoal[] : await db.goals.toArray();
+  const results: DailySettlementResult[] = [];
+  for (const goal of goals) {
+    const today = input.today ?? todayInTimezone(goal.timezone);
+    const [newAssignments, reviewAssignments] = await Promise.all([
+      db.dailyNewAssignments.where("goalId").equals(goal.id).toArray(),
+      db.dailyReviewAssignments.where("goalId").equals(goal.id).toArray()
+    ]);
+    const dates = new Set<string>();
+    newAssignments.forEach((assignment) => {
+      if (isOpenNewAssignment(assignment.status) && compareDates(assignment.date, today) < 0) {
+        dates.add(assignment.date);
+      }
+    });
+    reviewAssignments.forEach((assignment) => {
+      if (isOpenReviewAssignment(assignment.status) && compareDates(assignment.date, today) < 0) {
+        dates.add(assignment.date);
+      }
+    });
+
+    for (const date of Array.from(dates).sort(compareDates)) {
+      const result = await settleDailyTasks({ goalId: goal.id, date, mode: "auto" });
+      if (result.replanned) {
+        results.push(result);
+      }
+    }
+  }
+  return results;
 }
 
 export async function analyzeNaturalLanguageGoal(text: string): Promise<AIPlanningSuggestion> {
@@ -430,4 +564,12 @@ function withActualBookCounts(books: WordBook[], words: WordItem[]): WordBook[] 
     ...book,
     actualWordCount: words.filter((word) => word.sourceBookIds.includes(book.id)).length
   }));
+}
+
+function isOpenNewAssignment(status: DailyNewWordAssignment["status"]): boolean {
+  return status === "planned" || status === "rescheduled";
+}
+
+function isOpenReviewAssignment(status: DailyReviewAssignment["status"]): boolean {
+  return status === "planned" || status === "rescheduled";
 }

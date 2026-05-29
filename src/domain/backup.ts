@@ -36,7 +36,7 @@ const V1_ARRAY_FIELDS = [
 export function createBackupData(data: Omit<BackupDataV2, "schemaVersion" | "backupVersion" | "exportedAt">): BackupDataV2 {
   return {
     schemaVersion: 2,
-    backupVersion: "v0.2.0",
+    backupVersion: "v0.2.1",
     exportedAt: nowIso(),
     ...data
   };
@@ -79,7 +79,7 @@ export function parseBackupData(text: string): BackupData {
 export function migrateBackupV1(backup: BackupDataV1): BackupDataV2 {
   return {
     schemaVersion: 2,
-    backupVersion: "v0.2.0",
+    backupVersion: "v0.2.1",
     exportedAt: nowIso(),
     goals: backup.goals.map((goal): LearningGoal => ({
       id: goal.id,

@@ -1,12 +1,12 @@
 {
   "schemaVersion": 2,
-  "backupVersion": "v0.2.0",
+  "backupVersion": "v0.2.1",
   "exportedAt": "2026-05-29T08:00:00.000Z",
   "goals": [
     {
       "id": "goal:demo-backup-v020",
       "goalInputMode": "structured",
-      "interpretedGoal": "演示备份：验证 v0.2.0 具体单词任务恢复",
+      "interpretedGoal": "演示备份：验证 v0.2.1 具体单词任务恢复",
       "targetType": "CET4",
       "targetRequiredCount": 3,
       "startDate": "2026-05-29",

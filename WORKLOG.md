@@ -1,5 +1,77 @@
 # WORKLOG
 
+## 2026-05-29 - v0.2.1 修复
+
+### 版本与快照
+
+- v0.2.0 修复前最新 commit：`2942df8e952c5d148aa56df942e3639400dc51e8`。
+- 已创建并推送快照分支：`snapshot/v0.2.0-reviewed-before-v0.2.1`。
+- 当前修复分支：`codex/v0.2.1-daily-settlement-fix`。
+- `package.json` 版本号更新为 `0.2.1`。
+
+### 实际确认的缺陷代码路径
+
+- `src/services/plannerService.ts` 中 `recordNewWordAssignmentResult` 在单个新词点击后调用 `generateAndSavePlan(goal, addDays(assignment.date, 1), ...)`。
+- `src/domain/scheduler.ts` 中旧逻辑会把早于 `asOfDate` 的 `planned` 新词识别为 backlog。
+- `recordReviewAssignmentResult` 对 `not_completed` 复习同样从次日重排，触发同日未操作复习被提前逾期或重排的风险。
+
+### 修复方案
+
+- 调度器不再自动把 past `planned` 新词视为学习欠缺；欠缺只能来自明确 `missed` / `skipped` 或结算。
+- 调度器不再自动把 past `planned` 复习视为逾期；逾期只能来自明确 `overdue` 或结算。
+- 单个词条结果保存时传入 `preserveOpenDates`，保护同日仍开放的任务。
+- 新增 `settleDailyTasks`：用户主动结算指定日期开放任务。
+- 新增 `settlePastOpenTasks`：跨日自动结算早于当前目标时区今日的开放任务。
+- 跨日结算保护当前日期开放任务容量，避免历史欠缺挤掉今天正常任务。
+- 备份版本更新为 `v0.2.1`，保留 v0.2.0 / v0.1.0 导入兼容。
+
+### 新增或修改文件
+
+- `src/domain/scheduler.ts`
+- `src/domain/types.ts`
+- `src/domain/backup.ts`
+- `src/services/plannerService.ts`
+- `src/App.tsx`
+- `src/styles.css`
+- `tests/serviceSettlement.test.ts`
+- `tests/importBackup.test.ts`
+- `README.md`
+- `CHANGELOG.md`
+- `docs/scheduling_algorithm.md`
+- `docs/v0.2.1_acceptance.md`
+- `docs/v0.2.1_pr_description.md`
+- `package.json`
+- `package-lock.json`
+
+### 新增测试
+
+- 单个新词“已学习 / 已掌握 / 今日未完成 / 暂时跳过”不影响同日其他开放任务。
+- 单个复习“认识 / 未完成”不影响同日其他开放复习。
+- 主动结算新词和复习。
+- 重复结算幂等性。
+- 跨日自动结算新词和复习。
+- v0.2.0 三个核心业务场景回归。
+- v0.2.1 备份、v0.2.0 / v0.1.0 备份兼容和 Asia/Tokyo 时区边界。
+- 使用 `fake-indexeddb` 覆盖 Dexie 服务层真实交互路径。
+
+### 测试与构建
+
+```text
+npm.cmd test
+3 个测试文件，25 个测试通过
+
+npm.cmd run build
+TypeScript 与 Vite 生产构建通过
+```
+
+- `Invoke-WebRequest http://127.0.0.1:5173`：返回 200。
+
+### 发布状态
+
+- v0.2.1 尚未正式发布。
+- 不创建 v0.2.1 tag 或 Release。
+- 等待修复分支推送并创建 PR。
+
 ## 2026-05-29 - v0.2.0 开发
 
 ### Git 与版本

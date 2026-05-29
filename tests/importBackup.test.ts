@@ -9,7 +9,7 @@ describe("词表导入与备份兼容", () => {
     expect(result.errors).toContain("CSV 缺少必填字段 word");
   });
 
-  it("v0.2.0 导出后重新导入能够恢复具体任务相关数据", () => {
+  it("v0.2.1 导出后重新导入能够恢复具体任务相关数据", () => {
     const goal = makeGoal();
     const backup = createBackupData({
       goals: [goal],
@@ -49,7 +49,7 @@ describe("词表导入与备份兼容", () => {
     });
     const restored = parseBackupData(JSON.stringify(backup));
 
-    expect(restored.backupVersion).toBe("v0.2.0");
+    expect(restored.backupVersion).toBe("v0.2.1");
     expect(restored.goals[0].targetRequiredCount).toBe(120);
     expect(restored.wordProgress[0].state).toBe("reviewing");
     expect(restored.dailyNewAssignments[0].wordId).toBe("word:test");

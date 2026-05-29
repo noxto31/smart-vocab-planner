@@ -1,4 +1,4 @@
-# 数据模型：v0.2.0
+# 数据模型：v0.2.1
 
 ## 核心数量
 
@@ -72,13 +72,13 @@ v0.1.0 的 `targetVocabularyCount` 迁移为 `targetRequiredCount`。旧 `WordIt
 
 ## 备份策略
 
-v0.2.0 备份使用：
+v0.2.1 备份使用：
 
 ```json
 {
   "schemaVersion": 2,
-  "backupVersion": "v0.2.0"
+  "backupVersion": "v0.2.1"
 }
 ```
 
-导入时支持识别 v0.1.0 和 v0.2.0。v0.1.0 会转换为 v0.2.0 结构并保留旧数量记录。
+导入时支持识别 v0.1.0、v0.2.0 和 v0.2.1。v0.1.0 会转换为当前结构并保留旧数量记录。

@@ -27,6 +27,7 @@ import {
   recordReviewAssignmentResult,
   resetAllData,
   saveGoal,
+  settleDailyTasks,
   type AppDataState
 } from "./services/plannerService";
 
@@ -125,6 +126,14 @@ function App() {
   );
   const todayTask = (data?.dailyTasks ?? []).find((task) => task.goalId === currentGoalId && task.date === today) ?? null;
   const goalTasks = (data?.dailyTasks ?? []).filter((task) => task.goalId === currentGoalId);
+  const todayAllNewAssignments = (data?.dailyNewAssignments ?? []).filter((assignment) => assignment.goalId === currentGoalId && assignment.date === today);
+  const todayAllReviewAssignments = (data?.dailyReviewAssignments ?? []).filter((assignment) => assignment.goalId === currentGoalId && assignment.date === today);
+  const todayCompletedNew = todayAllNewAssignments.filter((assignment) => assignment.status === "learned" || assignment.status === "mastered").length;
+  const todayPendingNew = todayAllNewAssignments.filter((assignment) => assignment.status === "planned" || assignment.status === "rescheduled").length;
+  const todayMissedNew = todayAllNewAssignments.filter((assignment) => assignment.status === "missed" || assignment.status === "skipped").length;
+  const todayCompletedReviews = todayAllReviewAssignments.filter((assignment) => assignment.status === "completed").length;
+  const todayPendingReviews = todayAllReviewAssignments.filter((assignment) => assignment.status === "planned" || assignment.status === "rescheduled").length;
+  const todayMissedReviews = todayAllReviewAssignments.filter((assignment) => assignment.status === "overdue").length;
   const recommendations = useMemo(
     () => recommendBooks(currentGoal, data?.wordBooks ?? [], data?.words.length ?? 0).slice(0, 6),
     [currentGoal, data?.wordBooks, data?.words.length]
@@ -147,7 +156,7 @@ function App() {
     await runAction(async () => {
       const savedGoal = await saveGoal({ ...goalForm, updatedAt: nowIso() });
       const asOfDate = compareDates(savedGoal.startDate, today) > 0 ? savedGoal.startDate : todayInTimezone(savedGoal.timezone);
-      await generateAndSavePlan(savedGoal, asOfDate, currentGoal ? "goal_change" : "initial", "保存目标后生成 v0.2.0 具体单词计划");
+      await generateAndSavePlan(savedGoal, asOfDate, currentGoal ? "goal_change" : "initial", "保存目标后生成 v0.2.1 具体单词计划");
     }, "目标已保存，具体单词计划已生成");
   };
 
@@ -204,13 +213,29 @@ function App() {
     }, "复习结果已保存，下一次复习已排期");
   };
 
+  const handleSettleToday = async () => {
+    if (!currentGoal) {
+      setError("请先创建目标");
+      return;
+    }
+    const confirmed = window.confirm(
+      `确认结束今日学习并安排未完成任务？\n今日仍未处理新词：${todayPendingNew} 个\n今日仍未处理复习：${todayPendingReviews} 个\n确认后，这些任务会进入待补学或逾期复习队列并触发重排。`
+    );
+    if (!confirmed) {
+      return;
+    }
+    await runAction(async () => {
+      await settleDailyTasks({ goalId: currentGoal.id, date: today, mode: "manual" });
+    }, "今日未处理任务已结算并重排");
+  };
+
   const handleExport = async () => {
     await runAction(async () => {
       const backup = await exportBackup();
       const text = JSON.stringify(backup, null, 2);
       setBackupText(text);
-      downloadText("smart-vocab-planner-v0.2.0-backup.json", text, "application/json");
-    }, "v0.2.0 完整备份已生成");
+      downloadText("smart-vocab-planner-v0.2.1-backup.json", text, "application/json");
+    }, "v0.2.1 完整备份已生成");
   };
 
   const handleImportBackup = async () => {
@@ -227,7 +252,7 @@ function App() {
           <span className="brand-mark">VSP</span>
           <div>
             <strong>智能背词主流程</strong>
-            <small>v0.2.0 本地离线</small>
+            <small>v0.2.1 本地离线</small>
           </div>
         </div>
         <nav className="nav-list" aria-label="主导航">
@@ -405,11 +430,19 @@ function App() {
             <Panel title="今日状态">
               <div className="task-grid">
                 <MetricCard label="计划新学数量" value={todayTask?.plannedNewWordCount ?? 0} />
-                <MetricCard label="已绑定具体新词" value={todayNewAssignments.length} />
-                <MetricCard label="实际完成新词" value={todayTask?.completedNewWordCount ?? 0} />
-                <MetricCard label="待补学数量" value={latestPlan?.coverage.learningBacklogCount ?? 0} />
-                <MetricCard label="计划复习数量" value={todayReviewAssignments.length} />
-                <MetricCard label="逾期复习数量" value={latestPlan?.coverage.overdueReviewCount ?? 0} />
+                <MetricCard label="已完成新词" value={todayCompletedNew} />
+                <MetricCard label="仍待处理新词" value={todayPendingNew} />
+                <MetricCard label="明确未完成新词" value={todayMissedNew} />
+                <MetricCard label="已完成复习" value={todayCompletedReviews} />
+                <MetricCard label="仍待处理复习" value={todayPendingReviews} />
+                <MetricCard label="明确未完成复习" value={todayMissedReviews} />
+                <MetricCard label="历史待补学" value={latestPlan?.coverage.learningBacklogCount ?? 0} />
+                <MetricCard label="历史逾期复习" value={latestPlan?.coverage.overdueReviewCount ?? 0} />
+              </div>
+              <div className="action-row settle-row">
+                <button type="button" className="danger" onClick={handleSettleToday} disabled={!currentGoal || (todayPendingNew === 0 && todayPendingReviews === 0)}>
+                  结束今日学习并安排未完成任务
+                </button>
               </div>
             </Panel>
 
@@ -580,8 +613,8 @@ function App() {
               </button>
             </div>
             <Panel title="备份 JSON">
-              <p className="muted">v0.2.0 备份包含具体新词任务、复习任务、学习状态、调整日志和旧版数量记录。</p>
-              <textarea rows={18} value={backupText} onChange={(event) => setBackupText(event.target.value)} placeholder="导出的备份会显示在这里，也可以粘贴 v0.1.0 或 v0.2.0 备份 JSON 后导入" />
+              <p className="muted">v0.2.1 备份包含具体新词任务、复习任务、学习状态、调整日志和旧版数量记录。</p>
+              <textarea rows={18} value={backupText} onChange={(event) => setBackupText(event.target.value)} placeholder="导出的备份会显示在这里，也可以粘贴 v0.1.0、v0.2.0 或 v0.2.1 备份 JSON 后导入" />
             </Panel>
           </section>
         )}

@@ -45,6 +45,7 @@ export interface GeneratePlanInput {
   triggerType: AdjustmentTrigger;
   reason: string;
   beforeSnapshot?: PlanCoverageStatus;
+  preserveOpenDates?: LocalDateString[];
 }
 
 export interface NewWordResultInput {
@@ -117,22 +118,33 @@ export function generateWordLevelPlan(input: GeneratePlanInput): GeneratedPlanRe
     }
   });
 
-  const overdueReviewAssignments = input.existingReviewAssignments.map((assignment) =>
-    assignment.status === "planned" && compareDates(assignment.date, input.asOfDate) < 0
-      ? { ...assignment, status: "overdue" as const, updatedAt: timestamp }
-      : assignment
-  );
+  const preserveOpenDates = new Set(input.preserveOpenDates ?? []);
+  const overdueReviewAssignments = input.existingReviewAssignments.map((assignment) => ({ ...assignment }));
 
   const completedWordIds = getCompletedWordIds(Array.from(progressMap.values()), input.existingNewAssignments);
   const backlogWordIds = getBacklogWordIds(Array.from(progressMap.values()), input.existingNewAssignments, input.asOfDate);
+  const protectedOpenWordIds = new Set(
+    input.existingNewAssignments
+      .filter((assignment) => isOpenNewAssignment(assignment.status) && preserveOpenDates.has(assignment.date))
+      .map((assignment) => assignment.wordId)
+  );
   const historicalNewAssignments = input.existingNewAssignments.filter(
-    (assignment) => compareDates(assignment.date, input.asOfDate) < 0 || isClosedNewAssignment(assignment.status)
+    (assignment) =>
+      compareDates(assignment.date, input.asOfDate) < 0 ||
+      isClosedNewAssignment(assignment.status) ||
+      (isOpenNewAssignment(assignment.status) && preserveOpenDates.has(assignment.date))
   );
   const historicalReviewAssignments = overdueReviewAssignments.filter(
-    (assignment) => assignment.status === "completed" || compareDates(assignment.date, input.asOfDate) < 0
+    (assignment) =>
+      assignment.status === "completed" ||
+      compareDates(assignment.date, input.asOfDate) < 0 ||
+      (isOpenReviewAssignment(assignment.status) && preserveOpenDates.has(assignment.date))
   );
   const futureReviewAssignments = overdueReviewAssignments.filter(
-    (assignment) => assignment.status !== "completed" && compareDates(assignment.date, input.asOfDate) >= 0
+    (assignment) =>
+      assignment.status !== "completed" &&
+      compareDates(assignment.date, input.asOfDate) >= 0 &&
+      !(isOpenReviewAssignment(assignment.status) && preserveOpenDates.has(assignment.date))
   );
 
   const effectiveDates = enumerateDateRange(input.asOfDate, input.goal.deadline).filter(
@@ -146,10 +158,15 @@ export function generateWordLevelPlan(input: GeneratePlanInput): GeneratedPlanRe
   const targetWordIds = new Set(targetWords.map((word) => word.id));
   const uncompletedTargetWords = targetWords.filter((word) => !completedSet.has(word.id));
   const backlogWords = uncompletedTargetWords.filter((word) => backlogSet.has(word.id));
-  const notStartedWords = uncompletedTargetWords.filter((word) => !backlogSet.has(word.id));
+  const notStartedWords = uncompletedTargetWords.filter((word) => !backlogSet.has(word.id) && !protectedOpenWordIds.has(word.id));
 
   const scheduledNewAssignments: DailyNewWordAssignment[] = [];
   const newCapacityByDate = new Map(effectiveDates.map((date) => [date, input.goal.dailyNewWordLimit]));
+  historicalNewAssignments.forEach((assignment) => {
+    if (isOpenNewAssignment(assignment.status) && preserveOpenDates.has(assignment.date) && newCapacityByDate.has(assignment.date)) {
+      newCapacityByDate.set(assignment.date, Math.max(0, (newCapacityByDate.get(assignment.date) ?? 0) - 1));
+    }
+  });
   scheduleNewWords({
     words: backlogWords,
     goal: input.goal,
@@ -178,6 +195,9 @@ export function generateWordLevelPlan(input: GeneratePlanInput): GeneratedPlanRe
     asOfDate: input.asOfDate,
     existingFutureReviews: futureReviewAssignments,
     overdueReviews: historicalReviewAssignments.filter((assignment) => assignment.status === "overdue"),
+    preservedReviews: historicalReviewAssignments.filter(
+      (assignment) => isOpenReviewAssignment(assignment.status) && preserveOpenDates.has(assignment.date)
+    ),
     effectiveDates,
     timestamp
   });
@@ -310,8 +330,7 @@ export function computeCoverageStatus(
     reviewAssignments
       .filter(
         (assignment) =>
-          assignment.status === "overdue" ||
-          (assignment.status === "planned" && compareDates(assignment.date, asOfDate) < 0)
+          assignment.status === "overdue"
       )
       .map((assignment) => assignment.wordId)
   );
@@ -495,15 +514,20 @@ function getBacklogWordIds(
     if (assignment.status === "skipped" || assignment.status === "missed") {
       backlog.add(assignment.wordId);
     }
-    if (assignment.status === "planned" && compareDates(assignment.date, asOfDate) < 0) {
-      backlog.add(assignment.wordId);
-    }
   });
   return Array.from(backlog);
 }
 
 function isClosedNewAssignment(status: NewWordAssignmentStatus): boolean {
   return status === "learned" || status === "mastered" || status === "skipped" || status === "missed";
+}
+
+function isOpenNewAssignment(status: NewWordAssignmentStatus): boolean {
+  return status === "planned" || status === "rescheduled";
+}
+
+function isOpenReviewAssignment(status: DailyReviewAssignment["status"]): boolean {
+  return status === "planned" || status === "rescheduled";
 }
 
 function getBufferDates(studyDates: LocalDateString[], ratio: number): Set<LocalDateString> {
@@ -573,11 +597,17 @@ function scheduleReviewAssignments(input: {
   asOfDate: LocalDateString;
   existingFutureReviews: DailyReviewAssignment[];
   overdueReviews: DailyReviewAssignment[];
+  preservedReviews: DailyReviewAssignment[];
   effectiveDates: LocalDateString[];
   timestamp: string;
 }): { assignments: DailyReviewAssignment[]; overflow: number } {
   const assignments = input.existingFutureReviews.map((assignment) => ({ ...assignment }));
   const reviewCapacityByDate = new Map(input.effectiveDates.map((date) => [date, input.goal.dailyReviewLimit]));
+  input.preservedReviews.forEach((assignment) => {
+    if (reviewCapacityByDate.has(assignment.date)) {
+      reviewCapacityByDate.set(assignment.date, Math.max(0, (reviewCapacityByDate.get(assignment.date) ?? 0) - 1));
+    }
+  });
   assignments.forEach((assignment) => {
     if (assignment.status !== "completed" && reviewCapacityByDate.has(assignment.date)) {
       reviewCapacityByDate.set(assignment.date, Math.max(0, (reviewCapacityByDate.get(assignment.date) ?? 0) - 1));

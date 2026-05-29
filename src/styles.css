@@ -313,6 +313,10 @@ label {
   gap: 10px;
 }
 
+.settle-row {
+  margin-top: 14px;
+}
+
 .task-highlight,
 .info-list,
 .log-list,
