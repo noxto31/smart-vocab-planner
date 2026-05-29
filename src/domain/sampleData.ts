@@ -136,19 +136,20 @@ export function buildDemoGoal(startDate: string, deadline: string, targetVocabul
   const timestamp = new Date().toISOString();
   return {
     id: "goal:demo",
+    goalInputMode: "structured",
     targetType: "CET4",
-    targetDescription: "演示目标：用少量通用词验证计划生成和动态重排",
+    interpretedGoal: "演示目标：用少量通用词验证具体单词学习、复习和动态重排",
     startDate,
     deadline,
-    targetVocabularyCount,
-    currentEstimatedVocabulary: 1500,
+    targetRequiredCount: targetVocabularyCount,
     dailyNewWordLimit: 20,
     dailyReviewLimit: 80,
-    studyDaysPerWeek: 6,
     restWeekdays: [0],
     bufferDayRatio: 0.1,
     planStyle: "steady",
+    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
     selectedBookIds: ["book:foundation-demo", "book:cet4-core-demo"],
+    allowBookRecommendation: true,
     createdAt: timestamp,
     updatedAt: timestamp
   };

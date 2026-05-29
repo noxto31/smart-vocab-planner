@@ -141,7 +141,6 @@ export function importWordsFromCsv(text: string, existingWords: WordItem[] = [])
       sourceBookNames: [bookName],
       level: row[levelIndex]?.trim() || undefined,
       tags: (row[tagsIndex]?.split(/[;|，,\s]+/) ?? []).map((tag) => tag.trim()).filter(Boolean),
-      status: "new",
       createdAt: timestamp,
       updatedAt: timestamp
     });
