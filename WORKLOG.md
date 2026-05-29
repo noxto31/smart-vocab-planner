@@ -68,9 +68,14 @@ TypeScript 与 Vite 生产构建通过
 
 ### 发布状态
 
+- 修复提交：`a5c5aaa5c8b2e115663cc852d7adef1202a19e1c`，提交信息 `fix: implement v0.2.1 daily settlement and task consistency repair`。
+- 快照分支已推送：`origin/snapshot/v0.2.0-reviewed-before-v0.2.1` -> `2942df8e952c5d148aa56df942e3639400dc51e8`。
+- v0.2.1 修复分支已推送：`origin/codex/v0.2.1-daily-settlement-fix` -> `a5c5aaa5c8b2e115663cc852d7adef1202a19e1c`。
+- GitHub 返回 PR 创建入口：`https://github.com/noxto31/smart-vocab-planner/pull/new/codex/v0.2.1-daily-settlement-fix`。
+- PR 未能由当前环境自动创建：本机无 `gh` / `hub`，且未配置 `GITHUB_TOKEN`。
 - v0.2.1 尚未正式发布。
 - 不创建 v0.2.1 tag 或 Release。
-- 等待修复分支推送并创建 PR。
+- 等待在具备 GitHub 网页或 CLI 权限的环境中创建 PR，随后进入验收。
 
 ## 2026-05-29 - v0.2.0 开发
 
