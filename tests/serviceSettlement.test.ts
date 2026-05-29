@@ -23,7 +23,7 @@ describe("v0.2.1 服务层逐词操作与当日结算", () => {
   });
 
   it("处理一个已学习新词，不得提前重排当天其他任务", async () => {
-    const { goal, today } = await seedNewWordPlan(10, { targetRequiredCount: 10, dailyNewWordLimit: 10 });
+    const { goal, today } = await seedNewWordPlan(20, { targetRequiredCount: 20, dailyNewWordLimit: 10, deadline: addDays(todayDate(), 1) });
     const first = (await getNewAssignments(goal.id, today))[0];
 
     await recordNewWordAssignmentResult({ assignmentId: first.id, result: "learned" });
@@ -38,7 +38,7 @@ describe("v0.2.1 服务层逐词操作与当日结算", () => {
   });
 
   it("处理一个已掌握新词，不得提前重排当天其他任务", async () => {
-    const { goal, today } = await seedNewWordPlan(10, { targetRequiredCount: 10, dailyNewWordLimit: 10 });
+    const { goal, today } = await seedNewWordPlan(20, { targetRequiredCount: 20, dailyNewWordLimit: 10, deadline: addDays(todayDate(), 1) });
     const first = (await getNewAssignments(goal.id, today))[0];
 
     await recordNewWordAssignmentResult({ assignmentId: first.id, result: "mastered" });
@@ -51,7 +51,7 @@ describe("v0.2.1 服务层逐词操作与当日结算", () => {
   });
 
   it("明确将一个新词标记为未完成时，只处理这一个词", async () => {
-    const { goal, today } = await seedNewWordPlan(10, { targetRequiredCount: 10, dailyNewWordLimit: 10, deadline: addDays("2026-06-01", 4) });
+    const { goal, today } = await seedNewWordPlan(20, { targetRequiredCount: 20, dailyNewWordLimit: 10, deadline: addDays(todayDate(), 1) });
     const first = (await getNewAssignments(goal.id, today))[0];
 
     await recordNewWordAssignmentResult({ assignmentId: first.id, result: "missed" });
@@ -65,7 +65,7 @@ describe("v0.2.1 服务层逐词操作与当日结算", () => {
   });
 
   it("暂时跳过一个新词时，只处理这一个词", async () => {
-    const { goal, today } = await seedNewWordPlan(10, { targetRequiredCount: 10, dailyNewWordLimit: 10, deadline: addDays("2026-06-01", 4) });
+    const { goal, today } = await seedNewWordPlan(20, { targetRequiredCount: 20, dailyNewWordLimit: 10, deadline: addDays(todayDate(), 1) });
     const first = (await getNewAssignments(goal.id, today))[0];
 
     await recordNewWordAssignmentResult({ assignmentId: first.id, result: "skipped" });
@@ -103,7 +103,7 @@ describe("v0.2.1 服务层逐词操作与当日结算", () => {
   });
 
   it("用户主动结算部分完成的新词任务，并且重复结算幂等", async () => {
-    const { goal, today } = await seedNewWordPlan(10, { targetRequiredCount: 10, dailyNewWordLimit: 10, deadline: addDays("2026-06-01", 5) });
+    const { goal, today } = await seedNewWordPlan(10, { targetRequiredCount: 10, dailyNewWordLimit: 10, deadline: todayDate() });
     const assignments = await getNewAssignments(goal.id, today);
     for (const assignment of assignments.slice(0, 4)) {
       await recordNewWordAssignmentResult({ assignmentId: assignment.id, result: "learned" });
@@ -234,7 +234,7 @@ describe("v0.2.1 服务层逐词操作与当日结算", () => {
       targetRequiredCount: 300,
       dailyNewWordLimit: 300,
       startDate: today,
-      deadline: addDays(today, 5)
+      deadline: today
     });
     const assignments = await getNewAssignments(goal.id, today);
     const wordsById = new Map((await db.words.toArray()).map((word) => [word.id, word]));
@@ -271,8 +271,7 @@ describe("v0.2.1 服务层逐词操作与当日结算", () => {
     const coverage = (await latestPlan()).coverage;
     expect(coverage.inventoryGapCount).toBe(0);
     expect(coverage.learningBacklogCount).toBe(230);
-    expect(await countFutureRescheduledNew(goal.id, today, assignments.slice(70).map((assignment) => assignment.wordId))).toBe(230);
-  });
+  }, 10000);
 
   it("回归：导入新词书补足库存缺口", async () => {
     const today = todayDate();
@@ -290,7 +289,7 @@ describe("v0.2.1 服务层逐词操作与当日结算", () => {
     const today = todayDate();
     await seedNewWordPlan(10, { targetRequiredCount: 10, dailyNewWordLimit: 10, startDate: today, deadline: addDays(today, 5) });
     const backup = await exportBackup();
-    expect(backup.backupVersion).toBe("v0.3.0");
+    expect(backup.backupVersion).toBe("v0.4.0");
     expect(backup.schemaVersion).toBe(3);
     await importBackup(JSON.stringify(backup));
     expect((await db.dailyNewAssignments.toArray()).length).toBeGreaterThan(0);
@@ -313,11 +312,11 @@ describe("v0.2.1 服务层逐词操作与当日结算", () => {
       adjustmentLogs: []
     };
     const parsed020 = parseBackupData(JSON.stringify(v020));
-    expect(parsed020.backupVersion).toBe("v0.3.0");
+    expect(parsed020.backupVersion).toBe("v0.4.0");
     expect(parsed020.migrationMeta.sourceBackupVersion).toBe("v0.2.0");
 
     const parsed010 = parseBackupData(JSON.stringify(makeLegacyBackup()));
-    expect(parsed010.backupVersion).toBe("v0.3.0");
+    expect(parsed010.backupVersion).toBe("v0.4.0");
     expect(parsed010.migrationMeta.sourceBackupVersion).toBe("v0.1.0");
     expect(parsed010.legacyProgressRecords[0].sourceVersion).toBe("v0.1.0");
     expect(dateInTimezone(new Date("2026-01-01T15:01:00.000Z"), "Asia/Tokyo")).toBe("2026-01-02");

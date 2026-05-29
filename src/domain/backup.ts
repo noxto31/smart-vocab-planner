@@ -87,15 +87,15 @@ type BackupCreateInput = Omit<
 export function createBackupData(data: BackupCreateInput): BackupDataV3 {
   return {
     schemaVersion: 3,
-    backupVersion: "v0.3.0",
-    softwareVersion: "0.3.0",
+    backupVersion: "v0.4.0",
+    softwareVersion: "0.4.0",
     exportedAt: nowIso(),
     migrationMeta: {
-      sourceBackupVersion: "v0.3.0",
+      sourceBackupVersion: "v0.4.0",
       migratedAt: nowIso(),
-      notes: ["v0.3.0 原生备份"]
+      notes: ["v0.4.0 原生备份"]
     },
-    goalVersions: data.goalVersions ?? makeInitialGoalVersions(data.goals, "v0.3.0 原生备份缺少目标历史时生成的初始版本"),
+    goalVersions: data.goalVersions ?? makeInitialGoalVersions(data.goals, "v0.4.0 原生备份缺少目标历史时生成的初始版本"),
     stagePlans: data.stagePlans ?? [],
     dailySettlements: data.dailySettlements ?? [],
     weeklyReviews: data.weeklyReviews ?? [],
@@ -122,7 +122,7 @@ export function parseBackupData(text: string): BackupData {
   if (candidate.schemaVersion === 3) {
     V3_ARRAY_FIELDS.forEach((field) => {
       if (!Array.isArray(candidate[field])) {
-        throw new Error(`v0.3.0 备份缺少数组字段 ${field}`);
+        throw new Error(`v0.3.0/v0.4.0 备份缺少数组字段 ${field}`);
       }
     });
     return candidate as unknown as BackupDataV3;
@@ -176,8 +176,8 @@ export function migrateBackupV1(backup: BackupDataV1): BackupDataV3 {
     }));
   return {
     schemaVersion: 3,
-    backupVersion: "v0.3.0",
-    softwareVersion: "0.3.0",
+    backupVersion: "v0.4.0",
+    softwareVersion: "0.4.0",
     exportedAt: nowIso(),
     migrationMeta: {
       sourceBackupVersion: "v0.1.0",
@@ -216,14 +216,14 @@ export function migrateBackupV1(backup: BackupDataV1): BackupDataV3 {
 
 export function migrateBackupV2(backup: BackupDataV2): BackupDataV3 {
   const notes = [
-    `${backup.backupVersion} 备份迁移到 v0.3.0`,
+    `${backup.backupVersion} 备份迁移到 v0.4.0`,
     "保留已有具体任务、复习历史、legacy 历史和调整日志",
-    "v0.3.0 新增的复盘、AI 建议和结算记录缺失时初始化为空"
+    "v0.4.0 新增的动态恢复视图字段缺失时由计划重排重新生成"
   ];
   return {
     schemaVersion: 3,
-    backupVersion: "v0.3.0",
-    softwareVersion: "0.3.0",
+    backupVersion: "v0.4.0",
+    softwareVersion: "0.4.0",
     exportedAt: nowIso(),
     migrationMeta: {
       sourceBackupVersion: backup.backupVersion,

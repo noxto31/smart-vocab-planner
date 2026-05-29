@@ -35,6 +35,7 @@ import type {
 } from "./types";
 
 export const REVIEW_INTERVALS = [1, 3, 7, 14, 30] as const;
+export const REVIEW_LOAD_WEIGHT = 0.6;
 
 export interface GeneratePlanInput {
   goal: LearningGoal;
@@ -155,7 +156,6 @@ export function generateWordLevelPlan(input: GeneratePlanInput): GeneratedPlanRe
     (date) => !isRestDate(date, input.goal.restWeekdays)
   );
   const bufferDates = getBufferDates(effectiveDates, input.goal.bufferDayRatio);
-  const primaryDates = effectiveDates.filter((date) => !bufferDates.has(date));
 
   const completedSet = new Set(completedWordIds);
   const backlogSet = new Set(backlogWordIds);
@@ -163,36 +163,6 @@ export function generateWordLevelPlan(input: GeneratePlanInput): GeneratedPlanRe
   const uncompletedTargetWords = targetWords.filter((word) => !completedSet.has(word.id));
   const backlogWords = uncompletedTargetWords.filter((word) => backlogSet.has(word.id));
   const notStartedWords = uncompletedTargetWords.filter((word) => !backlogSet.has(word.id) && !protectedOpenWordIds.has(word.id));
-
-  const scheduledNewAssignments: DailyNewWordAssignment[] = [];
-  const newCapacityByDate = new Map(effectiveDates.map((date) => [date, input.goal.dailyNewWordLimit]));
-  historicalNewAssignments.forEach((assignment) => {
-    if (isOpenNewAssignment(assignment.status) && preserveOpenDates.has(assignment.date) && newCapacityByDate.has(assignment.date)) {
-      newCapacityByDate.set(assignment.date, Math.max(0, (newCapacityByDate.get(assignment.date) ?? 0) - 1));
-    }
-  });
-  scheduleNewWords({
-    words: backlogWords,
-    goal: input.goal,
-    orderedDates: [...Array.from(bufferDates), ...primaryDates],
-    capacityByDate: newCapacityByDate,
-    assignments: scheduledNewAssignments,
-    progressMap,
-    status: "rescheduled",
-    timestamp,
-    rescheduledFrom: findOriginalAssignmentDate(input.existingNewAssignments)
-  });
-
-  scheduleNewWords({
-    words: notStartedWords,
-    goal: input.goal,
-    orderedDates: [...primaryDates, ...Array.from(bufferDates)],
-    capacityByDate: newCapacityByDate,
-    assignments: scheduledNewAssignments,
-    progressMap,
-    status: "planned",
-    timestamp
-  });
 
   const reviewSchedule = scheduleReviewAssignments({
     goal: input.goal,
@@ -205,6 +175,32 @@ export function generateWordLevelPlan(input: GeneratePlanInput): GeneratedPlanRe
     effectiveDates,
     timestamp
   });
+
+  const scheduledNewAssignments: DailyNewWordAssignment[] = [];
+  const newCapacityByDate = new Map(effectiveDates.map((date) => [date, input.goal.dailyNewWordLimit]));
+  const preservedNewCountByDate = new Map<LocalDateString, number>();
+  historicalNewAssignments.forEach((assignment) => {
+    if (isOpenNewAssignment(assignment.status) && preserveOpenDates.has(assignment.date) && newCapacityByDate.has(assignment.date)) {
+      newCapacityByDate.set(assignment.date, Math.max(0, (newCapacityByDate.get(assignment.date) ?? 0) - 1));
+      preservedNewCountByDate.set(assignment.date, (preservedNewCountByDate.get(assignment.date) ?? 0) + 1);
+    }
+  });
+  const reviewCountByDate = countReviewsByDate([...historicalReviewAssignments, ...reviewSchedule.assignments], effectiveDates);
+  const newSchedule = scheduleNewWordsByLoad({
+    items: [
+      ...backlogWords.map((word) => ({ word, status: "rescheduled" as const })),
+      ...notStartedWords.map((word) => ({ word, status: "planned" as const }))
+    ],
+    goal: input.goal,
+    effectiveDates,
+    capacityByDate: newCapacityByDate,
+    existingNewCountByDate: preservedNewCountByDate,
+    reviewCountByDate,
+    progressMap,
+    timestamp,
+    rescheduledFrom: findOriginalAssignmentDate(input.existingNewAssignments)
+  });
+  scheduledNewAssignments.push(...newSchedule.assignments);
 
   const newAssignments = [...historicalNewAssignments, ...scheduledNewAssignments].sort(compareNewAssignments);
   const reviewAssignments = [...historicalReviewAssignments, ...reviewSchedule.assignments].sort(compareReviewAssignments);
@@ -228,7 +224,8 @@ export function generateWordLevelPlan(input: GeneratePlanInput): GeneratedPlanRe
     remainingEffectiveDays: effectiveDates.length,
     requiredDailyAverage,
     dailyNewWordLimit: input.goal.dailyNewWordLimit,
-    reviewOverflow: reviewSchedule.overflow
+    reviewOverflow: reviewSchedule.overflow,
+    newWordOverflow: newSchedule.overflow
   });
   const adjustmentReason = buildPlanReason({
     baseReason: input.reason,
@@ -237,7 +234,9 @@ export function generateWordLevelPlan(input: GeneratePlanInput): GeneratedPlanRe
     remainingEffectiveDays: effectiveDates.length,
     requiredDailyAverage,
     dailyLimitGap,
-    reviewOverflow: reviewSchedule.overflow
+    reviewOverflow: reviewSchedule.overflow,
+    newWordOverflow: newSchedule.overflow,
+    dailyNewWordLimit: input.goal.dailyNewWordLimit
   });
 
   const plan: StudyPlan = {
@@ -250,6 +249,8 @@ export function generateWordLevelPlan(input: GeneratePlanInput): GeneratedPlanRe
     remainingEffectiveDays: effectiveDates.length,
     requiredDailyAverage,
     dailyLimitGap,
+    newWordOverflowCount: newSchedule.overflow,
+    reviewWeight: REVIEW_LOAD_WEIGHT,
     coverage,
     adjustmentReason
   };
@@ -597,48 +598,125 @@ function getBufferDates(studyDates: LocalDateString[], ratio: number): Set<Local
   return new Set(studyDates.slice(-bufferCount));
 }
 
-function scheduleNewWords(input: {
-  words: WordItem[];
-  goal: LearningGoal;
-  orderedDates: LocalDateString[];
-  capacityByDate: Map<LocalDateString, number>;
-  assignments: DailyNewWordAssignment[];
-  progressMap: Map<string, WordProgress>;
+interface NewWordScheduleItem {
+  word: WordItem;
   status: Extract<NewWordAssignmentStatus, "planned" | "rescheduled">;
+}
+
+function scheduleNewWordsByLoad(input: {
+  items: NewWordScheduleItem[];
+  goal: LearningGoal;
+  effectiveDates: LocalDateString[];
+  capacityByDate: Map<LocalDateString, number>;
+  existingNewCountByDate: Map<LocalDateString, number>;
+  reviewCountByDate: Map<LocalDateString, number>;
+  progressMap: Map<string, WordProgress>;
   timestamp: string;
   rescheduledFrom?: (wordId: string) => LocalDateString | undefined;
-}): void {
-  let dateIndex = 0;
-  for (const word of input.words) {
-    while (dateIndex < input.orderedDates.length && (input.capacityByDate.get(input.orderedDates[dateIndex]) ?? 0) <= 0) {
-      dateIndex += 1;
-    }
-    if (dateIndex >= input.orderedDates.length) {
-      return;
+}): { assignments: DailyNewWordAssignment[]; overflow: number; newCountByDate: Map<LocalDateString, number> } {
+  const assignments: DailyNewWordAssignment[] = [];
+  const newCountByDate = new Map<LocalDateString, number>();
+  input.effectiveDates.forEach((date) => {
+    newCountByDate.set(date, input.existingNewCountByDate.get(date) ?? 0);
+  });
+  if (input.items.length === 0 || input.effectiveDates.length === 0) {
+    return { assignments, overflow: input.items.length, newCountByDate };
+  }
+
+  const dailyAverage = Math.ceil(input.items.length / input.effectiveDates.length);
+  const smoothExtra = Math.max(2, Math.ceil(dailyAverage * 0.2));
+  const maxNewByDate = new Map(
+    input.effectiveDates.map((date) => [
+      date,
+      Math.min(
+        (input.capacityByDate.get(date) ?? 0) + (input.existingNewCountByDate.get(date) ?? 0),
+        dailyAverage + smoothExtra
+      )
+    ])
+  );
+  let overflow = 0;
+
+  for (const item of input.items) {
+    const date = findBestDateForNewWord({
+      dates: input.effectiveDates,
+      capacityByDate: input.capacityByDate,
+      newCountByDate,
+      reviewCountByDate: input.reviewCountByDate,
+      maxNewByDate
+    });
+    if (!date) {
+      overflow += 1;
+      continue;
     }
 
-    const date = input.orderedDates[dateIndex];
     const remaining = input.capacityByDate.get(date) ?? 0;
     input.capacityByDate.set(date, remaining - 1);
-    input.assignments.push({
-      id: `new:${input.goal.id}:${date}:${word.id}`,
+    newCountByDate.set(date, (newCountByDate.get(date) ?? 0) + 1);
+    assignments.push({
+      id: `new:${input.goal.id}:${date}:${item.word.id}`,
       goalId: input.goal.id,
       date,
-      wordId: word.id,
-      status: input.status,
-      rescheduledFrom: input.rescheduledFrom?.(word.id),
+      wordId: item.word.id,
+      status: item.status,
+      rescheduledFrom: item.status === "rescheduled" ? input.rescheduledFrom?.(item.word.id) : undefined,
       createdAt: input.timestamp,
       updatedAt: input.timestamp
     });
-    const progress = input.progressMap.get(word.id);
-    input.progressMap.set(word.id, {
-      ...(progress ?? createInitialProgress(word, input.timestamp)),
-      state: input.status === "rescheduled" ? "learning_backlog" : "assigned_new",
+    const progress = input.progressMap.get(item.word.id);
+    input.progressMap.set(item.word.id, {
+      ...(progress ?? createInitialProgress(item.word, input.timestamp)),
+      state: item.status === "rescheduled" ? "learning_backlog" : "assigned_new",
       firstAssignedDate: progress?.firstAssignedDate ?? date,
-      sourceBookIds: word.sourceBookIds,
+      sourceBookIds: item.word.sourceBookIds,
       updatedAt: input.timestamp
     });
   }
+  return { assignments, overflow, newCountByDate };
+}
+
+function findBestDateForNewWord(input: {
+  dates: LocalDateString[];
+  capacityByDate: Map<LocalDateString, number>;
+  newCountByDate: Map<LocalDateString, number>;
+  reviewCountByDate: Map<LocalDateString, number>;
+  maxNewByDate: Map<LocalDateString, number>;
+}): LocalDateString | null {
+  let bestDate: LocalDateString | null = null;
+  let bestLoad = Number.POSITIVE_INFINITY;
+  let bestNewCount = Number.POSITIVE_INFINITY;
+  for (const date of input.dates) {
+    const capacity = input.capacityByDate.get(date) ?? 0;
+    const newCount = input.newCountByDate.get(date) ?? 0;
+    const maxNew = input.maxNewByDate.get(date) ?? 0;
+    if (capacity <= 0 || newCount >= maxNew) {
+      continue;
+    }
+    const projectedLoad = newCount + 1 + (input.reviewCountByDate.get(date) ?? 0) * REVIEW_LOAD_WEIGHT;
+    if (
+      projectedLoad < bestLoad ||
+      (projectedLoad === bestLoad && newCount < bestNewCount) ||
+      (projectedLoad === bestLoad && newCount === bestNewCount && (!bestDate || compareDates(date, bestDate) < 0))
+    ) {
+      bestDate = date;
+      bestLoad = projectedLoad;
+      bestNewCount = newCount;
+    }
+  }
+  return bestDate;
+}
+
+function countReviewsByDate(assignments: DailyReviewAssignment[], dates: LocalDateString[]): Map<LocalDateString, number> {
+  const dateSet = new Set(dates);
+  const counts = new Map(dates.map((date) => [date, 0]));
+  assignments.forEach((assignment) => {
+    if (!dateSet.has(assignment.date)) {
+      return;
+    }
+    if (assignment.status === "planned" || assignment.status === "rescheduled" || assignment.status === "overdue") {
+      counts.set(assignment.date, (counts.get(assignment.date) ?? 0) + 1);
+    }
+  });
+  return counts;
 }
 
 function findOriginalAssignmentDate(assignments: DailyNewWordAssignment[]): (wordId: string) => LocalDateString | undefined {
@@ -672,15 +750,17 @@ function scheduleReviewAssignments(input: {
       reviewCapacityByDate.set(assignment.date, Math.max(0, (reviewCapacityByDate.get(assignment.date) ?? 0) - 1));
     }
   });
+  const reviewCountByDate = new Map(input.effectiveDates.map((date) => [date, input.goal.dailyReviewLimit - (reviewCapacityByDate.get(date) ?? 0)]));
 
   let overflow = 0;
   for (const overdue of input.overdueReviews) {
-    const targetDate = input.effectiveDates.find((date) => (reviewCapacityByDate.get(date) ?? 0) > 0);
+    const targetDate = findLowestReviewDate(input.effectiveDates, reviewCapacityByDate, reviewCountByDate);
     if (!targetDate) {
       overflow += 1;
       continue;
     }
     reviewCapacityByDate.set(targetDate, (reviewCapacityByDate.get(targetDate) ?? 0) - 1);
+    reviewCountByDate.set(targetDate, (reviewCountByDate.get(targetDate) ?? 0) + 1);
     assignments.push({
       ...buildReviewAssignment({
         goalId: input.goal.id,
@@ -694,6 +774,26 @@ function scheduleReviewAssignments(input: {
     });
   }
   return { assignments, overflow };
+}
+
+function findLowestReviewDate(
+  dates: LocalDateString[],
+  capacityByDate: Map<LocalDateString, number>,
+  reviewCountByDate: Map<LocalDateString, number>
+): LocalDateString | null {
+  let bestDate: LocalDateString | null = null;
+  let bestCount = Number.POSITIVE_INFINITY;
+  for (const date of dates) {
+    if ((capacityByDate.get(date) ?? 0) <= 0) {
+      continue;
+    }
+    const count = reviewCountByDate.get(date) ?? 0;
+    if (count < bestCount || (count === bestCount && (!bestDate || compareDates(date, bestDate) < 0))) {
+      bestDate = date;
+      bestCount = count;
+    }
+  }
+  return bestDate;
 }
 
 function buildReviewAssignment(input: {
@@ -761,12 +861,27 @@ function buildDailySummaries(input: {
     const dayNew = input.newAssignments.filter((assignment) => assignment.date === date);
     const dayReviews = input.reviewAssignments.filter((assignment) => assignment.date === date);
     const isRestDay = isRestDate(date, input.goal.restWeekdays);
-    const boundNewWordCount = dayNew.filter((assignment) => assignment.status === "planned" || assignment.status === "rescheduled").length;
+    const originalNewWordCount = dayNew.filter((assignment) => assignment.status === "planned").length;
+    const catchUpNewWordCount = dayNew.filter((assignment) => assignment.status === "rescheduled").length;
+    const boundNewWordCount = originalNewWordCount + catchUpNewWordCount;
     const plannedReviewCount = dayReviews.filter((assignment) => assignment.status === "planned" || assignment.status === "rescheduled").length;
     const completedNewWordCount = dayNew.filter((assignment) => assignment.status === "learned" || assignment.status === "mastered").length;
     const completedReviewCount = dayReviews.filter((assignment) => assignment.status === "completed").length;
-    const overdueReviewCount = dayReviews.filter((assignment) => assignment.status === "overdue").length;
+    const overdueReviewCount = dayReviews.filter((assignment) => assignment.status === "overdue" || assignment.status === "rescheduled").length;
     const learningBacklogCount = dayNew.filter((assignment) => assignment.status === "skipped" || assignment.status === "missed").length;
+    const load = computeDailyLoad(boundNewWordCount, plannedReviewCount);
+    const comfortableLoad = computeComfortableLoad(input.goal.dailyNewWordLimit, input.goal.dailyReviewLimit);
+    const hardLoadLimit = computeHardLoadLimit(input.goal.dailyNewWordLimit, input.goal.dailyReviewLimit);
+    const capacityStatus = resolveCapacityStatus({
+      isRestDay,
+      newCount: boundNewWordCount,
+      reviewCount: plannedReviewCount,
+      newLimit: input.goal.dailyNewWordLimit,
+      reviewLimit: input.goal.dailyReviewLimit,
+      totalLoad: load,
+      comfortableLoad,
+      hardLoadLimit
+    });
     return {
       id: `task:${input.goal.id}:${date}`,
       goalId: input.goal.id,
@@ -782,46 +897,109 @@ function buildDailySummaries(input: {
       inventoryGapCount: input.coverage.inventoryGapCount,
       isBufferDay: input.bufferDates.has(date),
       isRestDay,
-      capacityStatus: resolveCapacityStatus(
-        isRestDay,
-        boundNewWordCount,
-        plannedReviewCount,
-        input.goal.dailyNewWordLimit,
-        input.goal.dailyReviewLimit
-      ),
+      originalNewWordCount,
+      catchUpNewWordCount,
+      adjustedNewWordCount: boundNewWordCount,
+      totalLoad: load,
+      comfortableLoad,
+      hardLoadLimit,
+      isDynamicallyAdjusted: catchUpNewWordCount > 0 || overdueReviewCount > 0,
+      dynamicAdjustmentReason: buildDynamicAdjustmentReason(catchUpNewWordCount, overdueReviewCount),
+      capacityStatus,
       feasibilityStatus: "feasible",
-      adjustmentReason: buildDailyReason(boundNewWordCount, plannedReviewCount, input.coverage.inventoryGapCount, isRestDay)
+      adjustmentReason: buildDailyReason({
+        originalNewWordCount,
+        catchUpNewWordCount,
+        reviewCount: plannedReviewCount,
+        overdueReviewCount,
+        inventoryGap: input.coverage.inventoryGapCount,
+        isRestDay,
+        capacityStatus
+      })
     };
   });
   return [...historicalTasks, ...summaries].sort((a, b) => compareDates(a.date, b.date));
 }
 
-function resolveCapacityStatus(
-  isRestDay: boolean,
-  newCount: number,
-  reviewCount: number,
-  newLimit: number,
-  reviewLimit: number
-): DailyTaskSummary["capacityStatus"] {
-  if (isRestDay) {
+function computeDailyLoad(newCount: number, reviewCount: number): number {
+  return Number((newCount + reviewCount * REVIEW_LOAD_WEIGHT).toFixed(1));
+}
+
+function computeComfortableLoad(newLimit: number, reviewLimit: number): number {
+  return Number((newLimit + reviewLimit * REVIEW_LOAD_WEIGHT * 0.75).toFixed(1));
+}
+
+function computeHardLoadLimit(newLimit: number, reviewLimit: number): number {
+  return Number((newLimit + reviewLimit * REVIEW_LOAD_WEIGHT).toFixed(1));
+}
+
+function resolveCapacityStatus(input: {
+  isRestDay: boolean;
+  newCount: number;
+  reviewCount: number;
+  newLimit: number;
+  reviewLimit: number;
+  totalLoad: number;
+  comfortableLoad: number;
+  hardLoadLimit: number;
+}): DailyTaskSummary["capacityStatus"] {
+  if (input.isRestDay) {
     return "rest";
   }
-  if (newCount > newLimit || reviewCount > reviewLimit) {
+  if (input.newCount > input.newLimit || input.reviewCount > input.reviewLimit || input.totalLoad > input.hardLoadLimit) {
     return "over_limit";
   }
-  if (newCount >= Math.ceil(newLimit * 0.9) || (reviewLimit > 0 && reviewCount >= Math.ceil(reviewLimit * 0.9))) {
+  if (
+    input.totalLoad > input.comfortableLoad ||
+    input.newCount >= Math.ceil(input.newLimit * 0.9) ||
+    (input.reviewLimit > 0 && input.reviewCount >= Math.ceil(input.reviewLimit * 0.9))
+  ) {
     return "near_limit";
+  }
+  if (input.totalLoad < input.comfortableLoad * 0.7) {
+    return "light";
   }
   return "ok";
 }
 
-function buildDailyReason(newCount: number, reviewCount: number, inventoryGap: number, isRestDay: boolean): string {
-  if (isRestDay) {
+function buildDynamicAdjustmentReason(catchUpNewWordCount: number, overdueReviewCount: number): string | undefined {
+  const notes: string[] = [];
+  if (catchUpNewWordCount > 0) {
+    notes.push(`含 ${catchUpNewWordCount} 个待补学新词`);
+  }
+  if (overdueReviewCount > 0) {
+    notes.push(`含 ${overdueReviewCount} 个待补复习`);
+  }
+  return notes.length > 0 ? notes.join("，") : undefined;
+}
+
+function buildDailyReason(input: {
+  originalNewWordCount: number;
+  catchUpNewWordCount: number;
+  reviewCount: number;
+  overdueReviewCount: number;
+  inventoryGap: number;
+  isRestDay: boolean;
+  capacityStatus: DailyTaskSummary["capacityStatus"];
+}): string {
+  if (input.isRestDay) {
     return "固定休息日，不安排新词或复习";
   }
-  const notes = [`已绑定 ${newCount} 个具体新词`, `安排 ${reviewCount} 个具体复习`];
-  if (inventoryGap > 0) {
-    notes.push(`仍有 ${inventoryGap} 个目标词缺少真实词条`);
+  const notes = [`安排 ${input.originalNewWordCount + input.catchUpNewWordCount} 个新词`, `复习 ${input.reviewCount} 个`];
+  if (input.catchUpNewWordCount > 0) {
+    notes.push(`其中 ${input.catchUpNewWordCount} 个是前面没完成后分摊来的待补学`);
+  }
+  if (input.overdueReviewCount > 0) {
+    notes.push(`含 ${input.overdueReviewCount} 个待补复习`);
+  }
+  if (input.capacityStatus === "near_limit") {
+    notes.push("今日任务偏多，但仍在上限内");
+  }
+  if (input.capacityStatus === "over_limit") {
+    notes.push("今日任务超过当前上限");
+  }
+  if (input.inventoryGap > 0) {
+    notes.push(`当前词表还差 ${input.inventoryGap} 个词，暂时不能完整安排`);
   }
   return notes.join("；");
 }
@@ -832,6 +1010,7 @@ function resolveFeasibilityStatus(input: {
   requiredDailyAverage: number;
   dailyNewWordLimit: number;
   reviewOverflow: number;
+  newWordOverflow: number;
 }): FeasibilityStatus {
   if (input.coverage.completedWordCount >= input.coverage.targetRequiredCount) {
     return "completed";
@@ -839,7 +1018,8 @@ function resolveFeasibilityStatus(input: {
   if (
     input.remainingEffectiveDays === 0 ||
     input.requiredDailyAverage > input.dailyNewWordLimit ||
-    input.reviewOverflow > 0
+    input.reviewOverflow > 0 ||
+    input.newWordOverflow > 0
   ) {
     return "infeasible";
   }
@@ -862,21 +1042,26 @@ function buildPlanReason(input: {
   requiredDailyAverage: number;
   dailyLimitGap: number;
   reviewOverflow: number;
+  newWordOverflow: number;
+  dailyNewWordLimit: number;
 }): string {
   const notes = [input.baseReason];
   if (input.coverage.inventoryGapCount > 0) {
-    notes.push(`词库供给缺口 ${input.coverage.inventoryGapCount} 个，不计为用户未完成`);
+    notes.push(`当前词表还差 ${input.coverage.inventoryGapCount} 个词，这部分不计为用户未完成`);
   }
   if (input.coverage.learningBacklogCount > 0) {
-    notes.push(`学习欠缺任务 ${input.coverage.learningBacklogCount} 个，已保留具体单词并重排`);
+    notes.push(`待补学 ${input.coverage.learningBacklogCount} 个，已保留具体单词并尽量分摊到后续学习日`);
   }
   if (input.coverage.overdueReviewCount > 0) {
-    notes.push(`逾期复习 ${input.coverage.overdueReviewCount} 个，需优先处理`);
+    notes.push(`待补复习 ${input.coverage.overdueReviewCount} 个，优先安排到复习压力较低的日期`);
   }
   if (input.feasibilityStatus === "infeasible") {
     notes.push(
-      `按现有限制无法完成：剩余有效学习日 ${input.remainingEffectiveDays} 天，最低每日新学 ${input.requiredDailyAverage} 个，超过当前上限 ${input.dailyLimitGap} 个`
+      `当前设置下无法按期完成：剩余有效学习日 ${input.remainingEffectiveDays} 天，至少需要每天 ${input.requiredDailyAverage} 个新词，当前每日新词上限 ${input.dailyNewWordLimit} 个`
     );
+  }
+  if (input.newWordOverflow > 0) {
+    notes.push(`仍有 ${input.newWordOverflow} 个新词无法放入截止日前的学习日`);
   }
   if (input.reviewOverflow > 0) {
     notes.push(`复习容量不足，仍有 ${input.reviewOverflow} 个复习任务无法安排`);

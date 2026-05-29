@@ -230,6 +230,8 @@ export interface StudyPlan {
   remainingEffectiveDays: number;
   requiredDailyAverage: number;
   dailyLimitGap: number;
+  newWordOverflowCount?: number;
+  reviewWeight?: number;
   coverage: PlanCoverageStatus;
   adjustmentReason: string;
 }
@@ -249,7 +251,15 @@ export interface DailyTaskSummary {
   inventoryGapCount: number;
   isBufferDay: boolean;
   isRestDay: boolean;
-  capacityStatus: "ok" | "near_limit" | "over_limit" | "rest";
+  originalNewWordCount?: number;
+  catchUpNewWordCount?: number;
+  adjustedNewWordCount?: number;
+  totalLoad?: number;
+  comfortableLoad?: number;
+  hardLoadLimit?: number;
+  isDynamicallyAdjusted?: boolean;
+  dynamicAdjustmentReason?: string;
+  capacityStatus: "light" | "ok" | "near_limit" | "over_limit" | "rest";
   feasibilityStatus: FeasibilityStatus;
   adjustmentReason: string;
 }
@@ -455,6 +465,9 @@ export interface AIPlanningSuggestion {
   suggestedTargetWordCount: number;
   suggestedDailyNewWordRange?: [number, number];
   inventoryGapCount?: number;
+  requiresWordbookImport?: boolean;
+  isReferenceOnly?: boolean;
+  referenceWordCountRange?: [number, number];
   suggestedStages: Array<{
     name: string;
     purpose: string;
@@ -492,8 +505,8 @@ export interface BackupDataV2 {
 
 export interface BackupDataV3 {
   schemaVersion: 3;
-  backupVersion: "v0.3.0";
-  softwareVersion: "0.3.0";
+  backupVersion: "v0.3.0" | "v0.4.0";
+  softwareVersion: "0.3.0" | "0.4.0";
   exportedAt: string;
   migrationMeta: {
     sourceBackupVersion?: string;

@@ -66,7 +66,7 @@ adapt,适应,Foundation Demo,A2,verb`;
     expect(adjusted.plan.coverage.completedWordCount).toBe(70);
     expect(adjusted.plan.coverage.learningBacklogCount).toBe(0);
     expect(adjusted.plan.coverage.inventoryGapCount).toBe(230);
-    expect(adjusted.plan.adjustmentReason).toContain("词库供给缺口 230 个，不计为用户未完成");
+    expect(adjusted.plan.adjustmentReason).toContain("当前词表还差 230 个词，这部分不计为用户未完成");
   });
 
   it("场景三：导入新增 180 个去重词后补足原库存缺口并生成后续任务", () => {
@@ -90,7 +90,7 @@ adapt,适应,Foundation Demo,A2,verb`;
     expect(afterImport.plan.coverage.availableWordCount).toBe(250);
     expect(afterImport.plan.coverage.inventoryGapCount).toBe(50);
     expect(afterImport.newAssignments.filter((assignment) => assignment.status === "planned")).toHaveLength(180);
-    expect(afterImport.adjustmentLog.explanation).toContain("词库供给缺口 50");
+    expect(afterImport.adjustmentLog.explanation).toContain("当前词表还差 50 个词");
   });
 
   it("场景二：词库足够但用户只完成 70 个时，230 个具体词进入待补学重排", () => {

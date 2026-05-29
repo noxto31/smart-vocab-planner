@@ -33,6 +33,49 @@
 - 新增 `docs/v0.4.0_language_guidelines.md`，冻结中文产品用词、内部状态映射和禁止裸露术语。
 - 新增 `docs/v0.4.0_acceptance.md`，冻结动态恢复、计划视图、中文用词、六级目标建议和发布验收场景。
 
+### 动态恢复实现
+
+- `src/domain/scheduler.ts` 新增 `REVIEW_LOAD_WEIGHT = 0.6`，每日总负荷按“新词 + 复习 * 0.6”计算。
+- 新词安排从按日期顺序填满改为按未来日期总负荷选择低压日期，待补学与未开始新词共同平滑分摊。
+- 逾期复习重排改为优先放入复习数量较低的日期。
+- `DailyTaskSummary` 增加原计划新词、待补学新词、调整后新词、总负荷、舒适负荷、硬上限、动态调整标记和中文可解释原因。
+- 不可行状态增加 `newWordOverflowCount`，说明仍有多少新词无法放入截止日前学习日。
+
+### 计划视图实现
+
+- 新增 `src/domain/planViews.ts`，提供今日任务卡片、周计划卡片、月历热力图、阶段时间轴和详细明细视图模型。
+- `src/App.tsx` 将“长期计划”主页面重构为计划总览、周计划、本月负荷热力图、阶段时间轴和详细明细。
+- 原每日表格保留为“详细明细”，不再作为唯一计划展示。
+- `src/styles.css` 增加周卡、热力图、阶段时间轴和压力状态样式。
+
+### 中文用词与六级建议
+
+- 新增 `src/domain/labels.ts`，集中维护任务压力、计划状态、新词任务、复习任务、词条状态、复习结果、词书状态和阶段状态的中文映射。
+- 页面指标调整为“本期目标词数”“已导入词汇总数”“已纳入当前计划”“目标词表缺口”“待补学”“任务压力”等表达。
+- 本地规则式智能规划建议在没有真实目标词表时标记为仅参考，不再生成“六级 900 词”这类正式精确建议。
+- 对仅参考建议，界面提示先导入目标词表或使用演示模式，不能直接应用为执行目标。
+
+### 新增测试
+
+- 新增 `tests/v040DynamicRecovery.test.ts`：覆盖漏学一天平滑分摊、少完成一部分平滑分摊、复习高峰日避让和每日上限不足。
+- 新增 `tests/v040PlanViews.test.ts`：覆盖今日卡片、周计划、月历热力图、阶段时间轴和详细明细。
+- 新增 `tests/v040Language.test.ts`：覆盖中文状态映射和无真实词表时六级建议不生成 900 词。
+- 更新 `tests/serviceSettlement.test.ts`、`tests/scheduler.test.ts`、`tests/importBackup.test.ts` 和 `tests/v030Acceptance.test.ts` 以适配 v0.4.0 平滑安排和备份版本。
+
+### 当前验证结果
+
+```text
+npm.cmd test
+7 个测试文件，46 个测试通过
+
+npm.cmd run build
+TypeScript 与 Vite 生产构建通过
+```
+
+- 本地 Vite 服务 `http://127.0.0.1:5173` 返回 HTTP 200。
+- Codex in-app Browser 插件两次启动均失败，错误摘要为 `windows sandbox failed: spawn setup refresh`；已记录为浏览器自动化验证受环境限制，未作为功能失败。
+- 已新增 `docs/v0.4.0_release_notes.md`，供当前环境无法创建 GitHub Release 时手动发布使用。
+
 ## 2026-05-29 - v0.3.0 启动与设计冻结
 
 ### 远程状态核对

@@ -9,7 +9,7 @@ describe("词表导入与备份兼容", () => {
     expect(result.errors).toContain("CSV 缺少必填字段 word");
   });
 
-  it("v0.3.0 导出后重新导入能够恢复具体任务相关数据", () => {
+  it("v0.4.0 导出后重新导入能够恢复具体任务相关数据", () => {
     const goal = makeGoal();
     const backup = createBackupData({
       goals: [goal],
@@ -49,7 +49,7 @@ describe("词表导入与备份兼容", () => {
     });
     const restored = parseBackupData(JSON.stringify(backup));
 
-    expect(restored.backupVersion).toBe("v0.3.0");
+    expect(restored.backupVersion).toBe("v0.4.0");
     expect(restored.schemaVersion).toBe(3);
     expect(restored.goalVersions[0].goalId).toBe(goal.id);
     expect(restored.goals[0].targetRequiredCount).toBe(120);
@@ -113,7 +113,7 @@ describe("词表导入与备份兼容", () => {
     };
     const restored = parseBackupData(JSON.stringify(legacy));
 
-    expect(restored.backupVersion).toBe("v0.3.0");
+    expect(restored.backupVersion).toBe("v0.4.0");
     expect(restored.migrationMeta.sourceBackupVersion).toBe("v0.1.0");
     expect(restored.goals[0].targetRequiredCount).toBe(300);
     expect(restored.words[0]).not.toHaveProperty("status");

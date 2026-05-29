@@ -1,12 +1,30 @@
 import { type ChangeEvent, type FormEvent, useEffect, useMemo, useState } from "react";
 import { addDays, compareDates, getLocalTimeZone, monthKey, nowIso, startOfIsoWeek, todayInTimezone } from "./domain/date";
+import {
+  labelFeasibility,
+  labelWordBookStatus,
+  newWordStatusLabels,
+  planStyleLabels,
+  reviewResultLabels,
+  reviewStatusLabels,
+  wordStateLabels
+} from "./domain/labels";
+import {
+  buildDetailedPlanRows,
+  buildMonthHeatmap,
+  buildPlanRiskText,
+  buildStageTimeline,
+  buildTodayTaskCard,
+  buildWeekPlanCards,
+  type MonthHeatmapDayView,
+  type StageTimelineItemView,
+  type WeekPlanDayView
+} from "./domain/planViews";
 import { TARGET_LABELS, recommendBooks } from "./domain/recommendation";
 import type {
   AIPlanningSuggestion,
   DailyNewWordAssignment,
   DailyReviewAssignment,
-  DailyTaskSummary,
-  FeasibilityStatus,
   PlanStyle,
   ReviewResult,
   TargetType,
@@ -52,27 +70,6 @@ const weekdays: Array<{ value: Weekday; label: string }> = [
   { value: 6, label: "周六" },
   { value: 0, label: "周日" }
 ];
-
-const feasibilityLabels: Record<FeasibilityStatus, string> = {
-  feasible: "进度正常",
-  atRisk: "需要关注",
-  infeasible: "按现有限制无法完成",
-  completed: "目标已完成"
-};
-
-const planStyleLabels: Record<PlanStyle, string> = {
-  steady: "平稳型",
-  frontLoaded: "前紧后松型",
-  flexible: "弹性型"
-};
-
-const reviewLabels: Record<ReviewResult, string> = {
-  forgot: "不认识",
-  vague: "模糊",
-  known: "认识",
-  easy: "很熟悉",
-  not_completed: "未完成"
-};
 
 function App() {
   const [activeTab, setActiveTab] = useState<TabId>("dashboard");
@@ -137,6 +134,28 @@ function App() {
   const todayCompletedReviews = todayAllReviewAssignments.filter((assignment) => assignment.status === "completed").length;
   const todayPendingReviews = todayAllReviewAssignments.filter((assignment) => assignment.status === "planned" || assignment.status === "rescheduled").length;
   const todayMissedReviews = todayAllReviewAssignments.filter((assignment) => assignment.status === "overdue").length;
+  const todayCard = useMemo(
+    () =>
+      buildTodayTaskCard({
+        date: today,
+        task: todayTask,
+        latestPlan,
+        latestAdjustment: data?.adjustmentLogs[0] ?? null
+      }),
+    [today, todayTask, latestPlan, data?.adjustmentLogs]
+  );
+  const weekCards = useMemo(() => buildWeekPlanCards(goalTasks, startOfIsoWeek(today)), [goalTasks, today]);
+  const monthHeatmap = useMemo(() => buildMonthHeatmap(goalTasks, monthKey(today)), [goalTasks, today]);
+  const stageTimeline = useMemo(
+    () =>
+      buildStageTimeline({
+        goal: currentGoal,
+        stages: (data?.stagePlans ?? []).filter((stage) => stage.goalId === currentGoalId),
+        tasks: goalTasks
+      }),
+    [currentGoal, data?.stagePlans, currentGoalId, goalTasks]
+  );
+  const detailedPlanRows = useMemo(() => buildDetailedPlanRows(goalTasks), [goalTasks]);
   const recommendations = useMemo(
     () => recommendBooks(currentGoal, data?.wordBooks ?? [], data?.words.length ?? 0).slice(0, 6),
     [currentGoal, data?.wordBooks, data?.words.length]
@@ -160,7 +179,7 @@ function App() {
       const appliedAdviceId = pendingAppliedAdviceId;
       const savedGoal = await saveGoal({ ...goalForm, updatedAt: nowIso() }, { appliedAdviceId });
       const asOfDate = compareDates(savedGoal.startDate, today) > 0 ? savedGoal.startDate : todayInTimezone(savedGoal.timezone);
-      await generateAndSavePlan(savedGoal, asOfDate, currentGoal ? "goal_change" : "initial", "保存目标后生成 v0.3.0 具体单词计划");
+      await generateAndSavePlan(savedGoal, asOfDate, currentGoal ? "goal_change" : "initial", "保存目标后生成 v0.4.0 动态学习安排");
       setPendingAppliedAdviceId(undefined);
     }, "目标已保存，具体单词计划已生成");
   };
@@ -169,11 +188,15 @@ function App() {
     await runAction(async () => {
       const suggestion = await analyzeNaturalLanguageGoal(naturalGoalText);
       setAiSuggestion(suggestion);
-    }, "已生成本地规则规划建议");
+    }, "已生成本地规则版智能规划建议");
   };
 
   const applyAiSuggestion = () => {
     if (!aiSuggestion) {
+      return;
+    }
+    if (aiSuggestion.requiresWordbookImport || aiSuggestion.isReferenceOnly) {
+      setMessage("还不能直接应用为执行目标。请先导入目标词表，或使用演示模式体验完整计划流程。");
       return;
     }
     setGoalForm({
@@ -190,7 +213,7 @@ function App() {
       updatedAt: nowIso()
     });
     setPendingAppliedAdviceId(aiSuggestion.id);
-    setMessage("AI 建议已填入表单，需点击“保存并生成计划”后才会改变执行目标");
+    setMessage("智能规划建议已填入表单，需点击“保存并生成计划”后才会改变执行目标");
   };
 
   const handleImport = async () => {
@@ -198,7 +221,7 @@ function App() {
       const result = await importWordText(importText, importFormat);
       const hints = result.errors.length > 0 ? `；提示：${result.errors.join("；")}` : "";
       setMessage(
-        `导入完成：新增 ${result.addedCount} 个，重复 ${result.duplicateCount} 个，补足缺口 ${result.replenishedCount} 个，剩余缺口 ${result.inventoryGapAfter} 个${hints}`
+        `导入完成：新增 ${result.addedCount} 个，重复 ${result.duplicateCount} 个，补充目标词表 ${result.replenishedCount} 个，仍需补充 ${result.inventoryGapAfter} 个${hints}`
       );
     }, "词表导入完成并已尝试重排");
   };
@@ -219,7 +242,7 @@ function App() {
   const handleReviewResult = async (assignmentId: string, result: ReviewResult) => {
     await runAction(async () => {
       await recordReviewAssignmentResult({ assignmentId, result });
-    }, "复习结果已保存，下一次复习已排期");
+    }, "复习结果已保存，下一次复习已安排");
   };
 
   const handleSettleToday = async () => {
@@ -243,8 +266,8 @@ function App() {
       const backup = await exportBackup();
       const text = JSON.stringify(backup, null, 2);
       setBackupText(text);
-      downloadText("smart-vocab-planner-v0.3.0-backup.json", text, "application/json");
-    }, "v0.3.0 完整备份已生成");
+      downloadText("smart-vocab-planner-v0.4.0-backup.json", text, "application/json");
+    }, "v0.4.0 完整备份已生成");
   };
 
   const handleImportBackup = async () => {
@@ -261,7 +284,7 @@ function App() {
           <span className="brand-mark">VSP</span>
           <div>
             <strong>智能背词主流程</strong>
-            <small>v0.3.0 本地离线</small>
+            <small>v0.4.0 本地离线</small>
           </div>
         </div>
         <nav className="nav-list" aria-label="主导航">
@@ -280,7 +303,7 @@ function App() {
             <h1>{tabs.find((tab) => tab.id === activeTab)?.label}</h1>
           </div>
           <div className={`status-pill ${latestPlan?.feasibilityStatus ?? "empty"}`}>
-            {latestPlan ? feasibilityLabels[latestPlan.feasibilityStatus] : "尚未生成计划"}
+            {labelFeasibility(latestPlan?.feasibilityStatus)}
           </div>
         </header>
 
@@ -290,12 +313,12 @@ function App() {
         {activeTab === "dashboard" && (
           <section className="section-stack">
             <div className="metric-grid">
-              <MetricCard label="目标需求词量" value={latestPlan?.coverage.targetRequiredCount ?? currentGoal?.targetRequiredCount ?? 0} />
-              <MetricCard label="词库可供给" value={latestPlan?.coverage.availableWordCount ?? data?.words.length ?? 0} />
-              <MetricCard label="已启用词量" value={latestPlan?.coverage.enabledWordCount ?? 0} />
-              <MetricCard label="词库供给缺口" value={latestPlan?.coverage.inventoryGapCount ?? 0} />
-              <MetricCard label="已完成具体新词" value={latestPlan?.coverage.completedWordCount ?? 0} />
-              <MetricCard label="待补学具体词" value={latestPlan?.coverage.learningBacklogCount ?? 0} />
+              <MetricCard label="本期目标词数" value={latestPlan?.coverage.targetRequiredCount ?? currentGoal?.targetRequiredCount ?? 0} />
+              <MetricCard label="已导入词汇总数" value={latestPlan?.coverage.availableWordCount ?? data?.words.length ?? 0} />
+              <MetricCard label="已纳入当前计划" value={latestPlan?.coverage.enabledWordCount ?? 0} />
+              <MetricCard label="目标词表缺口" value={latestPlan?.coverage.inventoryGapCount ?? 0} />
+              <MetricCard label="已完成学习" value={latestPlan?.coverage.completedWordCount ?? 0} />
+              <MetricCard label="待补学" value={latestPlan?.coverage.learningBacklogCount ?? 0} />
               <MetricCard label="逾期复习" value={latestPlan?.coverage.overdueReviewCount ?? 0} />
             </div>
 
@@ -307,14 +330,16 @@ function App() {
                   <div><dt>最近调整</dt><dd>{data?.adjustmentLogs[0]?.reason ?? "暂无调整"}</dd></div>
                 </dl>
                 <div className="task-grid">
-                  <MetricCard label="计划新词" value={todayTask?.plannedNewWordCount ?? todayNewAssignments.length} />
-                  <MetricCard label="已绑定新词" value={todayTask?.boundNewWordCount ?? todayNewAssignments.length} />
-                  <MetricCard label="计划复习" value={todayTask?.plannedReviewCount ?? todayReviewAssignments.length} />
+                  <MetricCard label="今日原计划" value={todayCard.originalNewWords} />
+                  <MetricCard label="调整后新词" value={todayCard.adjustedNewWords} />
+                  <MetricCard label="今日复习" value={todayCard.reviews} />
                   <MetricCard label="仍未处理" value={todayPendingNew + todayPendingReviews} />
-                  <MetricCard label="历史待补学" value={latestPlan?.coverage.learningBacklogCount ?? 0} />
-                  <MetricCard label="历史逾期复习" value={latestPlan?.coverage.overdueReviewCount ?? 0} />
-                  <MetricCard label="容量状态" value={todayTask?.capacityStatus ?? "ok"} />
+                  <MetricCard label="今日待补学" value={todayCard.catchUpNewWords} />
+                  <MetricCard label="今日总负荷" value={todayCard.totalLoad} />
+                  <MetricCard label="任务压力" value={todayCard.pressureStatus} />
                 </div>
+                <p className="muted">{todayCard.adjustmentReason}</p>
+                <p className="muted">{todayCard.pressureDescription}，完成进度 {todayCard.progressText}</p>
                 <div className="action-row">
                   <button type="button" onClick={() => setActiveTab("today")}>开始新词学习</button>
                   <button type="button" className="secondary" onClick={() => setActiveTab("today")}>开始今日复习</button>
@@ -327,6 +352,7 @@ function App() {
                     <div><dt>剩余有效学习日</dt><dd>{latestPlan.remainingEffectiveDays}</dd></div>
                     <div><dt>最低每日新学</dt><dd>{latestPlan.requiredDailyAverage}</dd></div>
                     <div><dt>当前每日上限</dt><dd>{currentGoal?.dailyNewWordLimit ?? 0}</dd></div>
+                    <div><dt>计划状态</dt><dd>{buildPlanRiskText(latestPlan)}</dd></div>
                     <div><dt>调整说明</dt><dd>{latestPlan.adjustmentReason}</dd></div>
                   </dl>
                 ) : (
@@ -343,7 +369,7 @@ function App() {
 
         {activeTab === "goal" && (
           <form className="section-stack" onSubmit={handleGoalSubmit}>
-            <Panel title="自然语言目标">
+            <Panel title="智能规划建议（本地规则版）">
               <div className="form-grid">
                 <label className="wide">
                   目标描述
@@ -351,20 +377,23 @@ function App() {
                 </label>
               </div>
               <div className="action-row">
-                <button type="button" className="secondary" onClick={handleNaturalGoal}>生成规划建议</button>
+                <button type="button" className="secondary" onClick={handleNaturalGoal}>生成智能规划建议</button>
                 <button type="button" onClick={applyAiSuggestion} disabled={!aiSuggestion}>应用到目标表单</button>
               </div>
               {aiSuggestion && (
                 <div className="suggestion-box">
                   <strong>{aiSuggestion.interpretedGoal}</strong>
                   <p>{aiSuggestion.explanation}</p>
+                  {aiSuggestion.referenceWordCountRange && (
+                    <p className="muted">参考范围：{aiSuggestion.referenceWordCountRange[0]} - {aiSuggestion.referenceWordCountRange[1]}，不是最终计划词量。</p>
+                  )}
                   <DataTable
                     columns={["阶段", "目的", "建议词量"]}
                     rows={aiSuggestion.suggestedStages.map((stage) => [stage.name, stage.purpose, stage.suggestedWordCount])}
                   />
                   <DataTable
                     columns={["词书类别", "角色", "是否已有词条", "导入要求"]}
-                    rows={aiSuggestion.recommendedBookCategories.map((book) => [book.name, book.role, book.hasExecutableWords ? "是" : "否", book.importRequirement ?? "需要导入后排期"])}
+                    rows={aiSuggestion.recommendedBookCategories.map((book) => [book.name, book.role, book.hasExecutableWords ? "是" : "否", book.importRequirement ?? "需要导入后安排"])}
                   />
                   {aiSuggestion.validationErrors && aiSuggestion.validationErrors.length > 0 && <p className="muted">本地校验：{aiSuggestion.validationErrors.join("；")}</p>}
                 </div>
@@ -388,7 +417,7 @@ function App() {
                   <input type="date" value={goalForm.deadline} onChange={(event) => setGoalForm({ ...goalForm, deadline: event.target.value })} />
                 </label>
                 <label>
-                  目标需求词量
+                  本期目标词数
                   <input min={1} type="number" value={goalForm.targetRequiredCount} onChange={(event) => setGoalForm({ ...goalForm, targetRequiredCount: Number(event.target.value) })} />
                 </label>
                 <label>
@@ -435,7 +464,7 @@ function App() {
                 </label>
                 <label>
                   <input type="checkbox" checked={goalForm.aiPlanningEnabled ?? true} onChange={() => setGoalForm({ ...goalForm, aiPlanningEnabled: !(goalForm.aiPlanningEnabled ?? true) })} />
-                  启用 AI 辅助规划接口
+                  启用智能规划建议
                 </label>
               </fieldset>
             </Panel>
@@ -450,7 +479,7 @@ function App() {
                       onChange={() => setGoalForm({ ...goalForm, selectedBookIds: toggleString(goalForm.selectedBookIds, book.id) })}
                     />
                     <span>{book.name}</span>
-                    <small>{book.actualWordCount ?? 0} 个真实去重词 · {book.hasImportedWords ? "已导入可排期" : "推荐但未导入"}</small>
+                    <small>{book.actualWordCount ?? 0} 个真实去重词 · {book.hasImportedWords ? "已导入可安排" : "推荐导入"}</small>
                   </label>
                 ))}
               </div>
@@ -481,7 +510,7 @@ function App() {
                   `${stage.startDate} 至 ${stage.endDate}`,
                   stage.plannedNewWordCount,
                   stage.plannedReviewCount,
-                  stage.status,
+                  stageTimeline.find((item) => item.id === stage.id)?.status ?? stage.status,
                   stage.riskNote
                 ])}
               />
@@ -493,15 +522,15 @@ function App() {
           <section className="section-stack">
             <Panel title="今日状态">
               <div className="task-grid">
-                <MetricCard label="计划新学数量" value={todayTask?.plannedNewWordCount ?? 0} />
+                <MetricCard label="今日新词" value={todayCard.newWords} />
                 <MetricCard label="已完成新词" value={todayCompletedNew} />
                 <MetricCard label="仍待处理新词" value={todayPendingNew} />
                 <MetricCard label="明确未完成新词" value={todayMissedNew} />
                 <MetricCard label="已完成复习" value={todayCompletedReviews} />
                 <MetricCard label="仍待处理复习" value={todayPendingReviews} />
                 <MetricCard label="明确未完成复习" value={todayMissedReviews} />
-                <MetricCard label="历史待补学" value={latestPlan?.coverage.learningBacklogCount ?? 0} />
-                <MetricCard label="历史逾期复习" value={latestPlan?.coverage.overdueReviewCount ?? 0} />
+                <MetricCard label="累计待补学" value={latestPlan?.coverage.learningBacklogCount ?? 0} />
+                <MetricCard label="累计逾期复习" value={latestPlan?.coverage.overdueReviewCount ?? 0} />
               </div>
               <div className="action-row settle-row">
                 <button type="button" className="danger" onClick={handleSettleToday} disabled={!currentGoal || (todayPendingNew === 0 && todayPendingReviews === 0)}>
@@ -533,55 +562,45 @@ function App() {
 
         {activeTab === "plans" && (
           <section className="section-stack">
-            <Panel title="长期覆盖">
+            <Panel title="计划总览">
               {latestPlan ? (
                 <dl className="info-list">
-                  <div><dt>目标需求量</dt><dd>{latestPlan.coverage.targetRequiredCount}</dd></div>
-                  <div><dt>可供给词量</dt><dd>{latestPlan.coverage.availableWordCount}</dd></div>
-                  <div><dt>已启用词量</dt><dd>{latestPlan.coverage.enabledWordCount}</dd></div>
-                  <div><dt>已绑定计划量</dt><dd>{latestPlan.coverage.assignedWordCount}</dd></div>
-                  <div><dt>实际完成量</dt><dd>{latestPlan.coverage.completedWordCount}</dd></div>
+                  <div><dt>本期目标词数</dt><dd>{latestPlan.coverage.targetRequiredCount}</dd></div>
+                  <div><dt>已导入词汇总数</dt><dd>{latestPlan.coverage.availableWordCount}</dd></div>
+                  <div><dt>已纳入当前计划</dt><dd>{latestPlan.coverage.enabledWordCount}</dd></div>
+                  <div><dt>已安排学习</dt><dd>{latestPlan.coverage.assignedWordCount}</dd></div>
+                  <div><dt>已完成学习</dt><dd>{latestPlan.coverage.completedWordCount}</dd></div>
                   <div><dt>复习中词量</dt><dd>{latestPlan.coverage.reviewingWordCount}</dd></div>
                   <div><dt>已掌握词量</dt><dd>{latestPlan.coverage.masteredWordCount}</dd></div>
-                  <div><dt>词库供给缺口</dt><dd>{latestPlan.coverage.inventoryGapCount}</dd></div>
-                  <div><dt>学习欠缺任务</dt><dd>{latestPlan.coverage.learningBacklogCount}</dd></div>
-                  <div><dt>逾期复习任务</dt><dd>{latestPlan.coverage.overdueReviewCount}</dd></div>
+                  <div><dt>目标词表缺口</dt><dd>{latestPlan.coverage.inventoryGapCount}</dd></div>
+                  <div><dt>待补学</dt><dd>{latestPlan.coverage.learningBacklogCount}</dd></div>
+                  <div><dt>逾期复习</dt><dd>{latestPlan.coverage.overdueReviewCount}</dd></div>
                 </dl>
               ) : <EmptyState text="暂无计划" />}
             </Panel>
 
-            <div className="two-column">
-              <Panel title="月度计划">
-                <DataTable
-                  columns={["月份", "阶段", "新学", "复习", "补学", "长期状态"]}
-                  rows={(data?.monthlyReviews ?? []).filter((item) => item.goalId === currentGoalId).map((row) => [row.month, row.stageGoal, row.plannedNewWords, row.plannedReviews, row.accumulatedBacklog, row.longTermStatus])}
-                />
-              </Panel>
-              <Panel title="周度计划">
-                <DataTable
-                  columns={["周起始", "新学计划/实际", "复习计划/实际", "补学", "逾期", "负荷变化"]}
-                  rows={(data?.weeklyReviews ?? []).filter((item) => item.goalId === currentGoalId).map((row) => [
-                    row.weekStart,
-                    `${row.plannedNewWords} / ${row.actualNewWords}`,
-                    `${row.plannedReviews} / ${row.actualReviews}`,
-                    row.newLearningBacklog,
-                    row.newOverdueReviews,
-                    row.nextWeekLoadChange
-                  ])}
-                />
-              </Panel>
-            </div>
+            <Panel title="周计划">
+              <WeekPlanCards days={weekCards} />
+            </Panel>
 
-            <Panel title="每日任务数量">
+            <Panel title="本月负荷热力图">
+              <MonthHeatmap days={monthHeatmap} />
+            </Panel>
+
+            <Panel title="阶段时间轴">
+              <StageTimeline items={stageTimeline} />
+            </Panel>
+
+            <Panel title="详细明细">
               <DataTable
-                columns={["日期", "新词", "复习", "缺口", "补学", "状态"]}
-                rows={goalTasks.slice(0, 160).map((task) => [
-                  task.date,
-                  task.boundNewWordCount,
-                  task.plannedReviewCount,
-                  task.inventoryGapCount,
-                  task.learningBacklogCount,
-                  task.capacityStatus
+                columns={["日期", "新词", "复习", "待补学", "逾期复习", "任务压力"]}
+                rows={detailedPlanRows.slice(0, 160).map((row) => [
+                  row.date,
+                  row.newWords,
+                  row.reviews,
+                  row.catchUpNewWords,
+                  row.overdueReviews,
+                  row.pressureStatus
                 ])}
               />
             </Panel>
@@ -596,9 +615,9 @@ function App() {
           <section className="section-stack">
             <div className="metric-grid">
               <MetricCard label="合并去重词数" value={data?.words.length ?? 0} />
-              <MetricCard label="当前目标缺口" value={latestPlan?.coverage.inventoryGapCount ?? 0} />
+              <MetricCard label="目标词表缺口" value={latestPlan?.coverage.inventoryGapCount ?? 0} />
               <MetricCard label="已导入词书" value={(data?.wordBooks ?? []).filter((book) => book.hasImportedWords).length} />
-              <MetricCard label="可排期词书" value={(data?.wordBooks ?? []).filter((book) => (book.actualWordCount ?? 0) > 0).length} />
+              <MetricCard label="可安排词书" value={(data?.wordBooks ?? []).filter((book) => (book.actualWordCount ?? 0) > 0).length} />
             </div>
 
             <div className="action-row">
@@ -608,10 +627,10 @@ function App() {
 
             <Panel title="词书推荐与可执行状态">
               <DataTable
-                columns={["词书", "状态", "角色", "真实词数", "排期条件", "推荐理由"]}
+                columns={["词书", "状态", "角色", "真实词数", "安排条件", "推荐理由"]}
                 rows={recommendations.map((item) => [
                   item.book.name,
-                  item.status,
+                  labelWordBookStatus(item.status),
                   item.suggestedStagePosition,
                   item.expectedIndependentWordCount,
                   item.importRequirement,
@@ -627,7 +646,7 @@ function App() {
                   <option value="json">JSON</option>
                 </select>
                 <input type="file" accept=".csv,.json,text/csv,application/json" onChange={handleFileImport} />
-                <button type="button" onClick={handleImport}>导入并重排</button>
+                <button type="button" onClick={handleImport}>导入并重新安排</button>
               </div>
               <textarea rows={10} value={importText} onChange={(event) => setImportText(event.target.value)} placeholder="粘贴 CSV 或 JSON 词表内容" />
             </Panel>
@@ -637,7 +656,7 @@ function App() {
                 columns={["词书", "状态", "目标", "难度", "真实去重词数", "来源"]}
                 rows={(data?.wordBooks ?? []).map((book) => [
                   book.name,
-                  book.status ?? "recommended",
+                  labelWordBookStatus(book.status),
                   book.targetType,
                   book.difficulty,
                   book.actualWordCount ?? 0,
@@ -654,13 +673,13 @@ function App() {
               <MetricCard label="已掌握" value={(data?.wordProgress ?? []).filter((item) => item.state === "mastered").length} />
               <MetricCard label="复习中" value={(data?.wordProgress ?? []).filter((item) => item.state === "reviewing" || item.state === "learned").length} />
               <MetricCard label="尚未开始" value={(data?.wordProgress ?? []).filter((item) => item.state === "not_started").length} />
-              <MetricCard label="词库缺口" value={latestPlan?.coverage.inventoryGapCount ?? 0} />
-              <MetricCard label="学习欠缺" value={latestPlan?.coverage.learningBacklogCount ?? 0} />
+              <MetricCard label="目标词表缺口" value={latestPlan?.coverage.inventoryGapCount ?? 0} />
+              <MetricCard label="待补学" value={latestPlan?.coverage.learningBacklogCount ?? 0} />
               <MetricCard label="逾期复习" value={latestPlan?.coverage.overdueReviewCount ?? 0} />
             </div>
             <Panel title="每日新词与复习完成">
               <DataTable
-                columns={["日期", "新词完成", "复习完成", "补学", "逾期"]}
+                columns={["日期", "新词完成", "复习完成", "待补学", "逾期复习"]}
                 rows={goalTasks.map((task) => [task.date, task.completedNewWordCount, task.completedReviewCount, task.learningBacklogCount, task.overdueReviewCount])}
               />
             </Panel>
@@ -671,10 +690,10 @@ function App() {
                   const word = wordsById.get(progress.wordId);
                   return [
                     word?.word ?? progress.wordId,
-                    progress.state,
+                    wordStateLabels[progress.state],
                     progress.firstLearnedDate ?? "-",
                     progress.reviewCount ?? 0,
-                    progress.recentReviewResult ?? "-",
+                    progress.recentReviewResult ? reviewResultLabels[progress.recentReviewResult] : "-",
                     progress.nextReviewDate ?? "-",
                     progress.isDifficult ? progress.difficultyReason ?? "重点遗忘词" : "-"
                   ];
@@ -686,7 +705,7 @@ function App() {
                 columns={["日期", "单词", "阶段", "结果"]}
                 rows={(data?.reviewHistory ?? []).map((record) => {
                   const word = wordsById.get(record.wordId);
-                  return [record.date, word?.word ?? record.wordId, record.reviewStage + 1, reviewLabels[record.result]];
+                  return [record.date, word?.word ?? record.wordId, record.reviewStage + 1, reviewResultLabels[record.result]];
                 })}
               />
             </Panel>
@@ -717,8 +736,8 @@ function App() {
               </button>
             </div>
             <Panel title="备份 JSON">
-              <p className="muted">v0.3.0 备份包含目标历史、阶段计划、词书状态、具体任务、学习历史、复盘、AI 建议记录、调整日志和旧版数量记录。</p>
-              <textarea rows={18} value={backupText} onChange={(event) => setBackupText(event.target.value)} placeholder="导出的备份会显示在这里，也可以粘贴 v0.1.0、v0.2.0、v0.2.1 或 v0.3.0 备份 JSON 后导入" />
+              <p className="muted">v0.4.0 备份包含目标历史、阶段计划、词书状态、具体任务、学习历史、复盘、智能规划建议记录、调整日志和旧版数量记录。</p>
+              <textarea rows={18} value={backupText} onChange={(event) => setBackupText(event.target.value)} placeholder="导出的备份会显示在这里，也可以粘贴 v0.1.0、v0.2.0、v0.2.1、v0.3.0 或 v0.4.0 备份 JSON 后导入" />
             </Panel>
           </section>
         )}
@@ -744,7 +763,7 @@ function AssignmentList(props: {
             <div>
               <strong>{word?.word ?? assignment.wordId}</strong>
               <p>{word?.meaning || "暂无释义"}</p>
-              <small>{word?.sourceBookNames.join(" / ") || "未知来源"} · {word?.level ?? "未标级"}</small>
+              <small>{word?.sourceBookNames.join(" / ") || "未知来源"} · {word?.level ?? "未标级"} · {newWordStatusLabels[assignment.status]}</small>
             </div>
             <div className="button-strip">
               <button type="button" onClick={() => props.onResult(assignment.id, "learned")}>已学习</button>
@@ -782,14 +801,14 @@ function ReviewList(props: {
               <strong>{word?.word ?? assignment.wordId}</strong>
               <p>{revealed ? word?.meaning || "暂无释义" : "释义已隐藏"}</p>
               <small>
-                复习阶段 {assignment.reviewStage + 1} · {assignment.status} · 首学 {progress?.firstLearnedDate ?? "-"} · 已复习 {progress?.reviewCount ?? 0} 次 · 最近 {progress?.recentReviewResult ?? "-"} · 下次 {progress?.nextReviewDate ?? "-"} · 遗忘 {progress?.lapseCount ?? 0}
+                复习阶段 {assignment.reviewStage + 1} · {reviewStatusLabels[assignment.status]} · 首学 {progress?.firstLearnedDate ?? "-"} · 已复习 {progress?.reviewCount ?? 0} 次 · 最近 {progress?.recentReviewResult ? reviewResultLabels[progress.recentReviewResult] : "-"} · 下次 {progress?.nextReviewDate ?? "-"} · 遗忘 {progress?.lapseCount ?? 0}
               </small>
             </div>
             <div className="button-strip">
               {!revealed && <button type="button" className="secondary" onClick={() => props.onReveal(assignment.id)}>查看释义</button>}
-              {(Object.keys(reviewLabels) as ReviewResult[]).map((result) => (
+              {(Object.keys(reviewResultLabels) as ReviewResult[]).map((result) => (
                 <button key={result} type="button" onClick={() => props.onResult(assignment.id, result)}>
-                  {reviewLabels[result]}
+                  {reviewResultLabels[result]}
                 </button>
               ))}
             </div>
@@ -882,6 +901,91 @@ function DataTable(props: { columns: string[]; rows: Array<Array<string | number
   );
 }
 
+function WeekPlanCards(props: { days: WeekPlanDayView[] }) {
+  if (props.days.length === 0) {
+    return <EmptyState text="暂无周计划" />;
+  }
+  return (
+    <div className="week-card-grid">
+      {props.days.map((day) => (
+        <article className={`plan-day-card ${pressureClassName(day.pressureStatus)}`} key={day.date}>
+          <div className="day-card-head">
+            <strong>{day.weekday}</strong>
+            <span>{day.date}</span>
+          </div>
+          <div className="day-card-metrics">
+            <span>新词 {day.newWords}</span>
+            <span>复习 {day.reviews}</span>
+            <span>待补学 {day.catchUpNewWords}</span>
+            <span>逾期 {day.overdueReviews}</span>
+          </div>
+          <small>{day.isRestDay ? "休息日" : `总负荷 ${day.totalLoad} · ${day.pressureStatus}`}</small>
+          {day.isDynamicallyAdjusted && <p>{day.adjustmentReason}</p>}
+        </article>
+      ))}
+    </div>
+  );
+}
+
+function MonthHeatmap(props: { days: MonthHeatmapDayView[] }) {
+  if (props.days.length === 0) {
+    return <EmptyState text="暂无月历数据" />;
+  }
+  return (
+    <div className="heatmap-grid">
+      {props.days.map((day) => (
+        <article className={`heatmap-day ${pressureClassName(day.pressureStatus)}`} key={day.date}>
+          <strong>{day.date.slice(8)}</strong>
+          <span>{day.pressureStatus}</span>
+          <small>新 {day.newWords} / 复 {day.reviews}</small>
+          {day.hasCatchUpOrOverdue && <em>有补学或逾期</em>}
+          {day.isCompleted && <em>已完成</em>}
+          {day.isUnfinished && <em>未完成</em>}
+        </article>
+      ))}
+    </div>
+  );
+}
+
+function StageTimeline(props: { items: StageTimelineItemView[] }) {
+  if (props.items.length === 0) {
+    return <EmptyState text="暂无阶段计划" />;
+  }
+  return (
+    <div className="timeline-list">
+      {props.items.map((item) => (
+        <article key={item.id}>
+          <strong>{item.name}</strong>
+          <span>{item.dateRange} · {item.status}</span>
+          <div className="day-card-metrics">
+            <span>目标 {item.targetWords}</span>
+            <span>已完成 {item.completedWords}</span>
+            <span>剩余 {item.remainingWords}</span>
+          </div>
+          {item.changedByRecovery && <small>已根据动态恢复调整</small>}
+          <p>{item.note}</p>
+        </article>
+      ))}
+    </div>
+  );
+}
+
+function pressureClassName(label: string): string {
+  if (label === "超限") {
+    return "pressure-over";
+  }
+  if (label === "偏高") {
+    return "pressure-high";
+  }
+  if (label === "轻松") {
+    return "pressure-light";
+  }
+  if (label === "休息") {
+    return "pressure-rest";
+  }
+  return "pressure-normal";
+}
+
 function CompactLog(props: { logs: Array<{ id: string; createdAt: string; explanation: string; reason: string }> }) {
   if (props.logs.length === 0) {
     return <EmptyState text="暂无调整日志" />;
@@ -897,40 +1001,6 @@ function CompactLog(props: { logs: Array<{ id: string; createdAt: string; explan
       ))}
     </div>
   );
-}
-
-function buildMonthlyRows(tasks: DailyTaskSummary[]) {
-  const groups = new Map<string, DailyTaskSummary[]>();
-  tasks.forEach((task) => {
-    const key = monthKey(task.date);
-    groups.set(key, [...(groups.get(key) ?? []), task]);
-  });
-  return Array.from(groups.entries()).map(([month, rows]) => ({
-    month,
-    newCount: sumTasks(rows, "boundNewWordCount"),
-    reviewCount: sumTasks(rows, "plannedReviewCount"),
-    backlogCount: sumTasks(rows, "learningBacklogCount"),
-    overdueCount: sumTasks(rows, "overdueReviewCount")
-  }));
-}
-
-function buildWeeklyRows(tasks: DailyTaskSummary[]) {
-  const groups = new Map<string, DailyTaskSummary[]>();
-  tasks.forEach((task) => {
-    const key = startOfIsoWeek(task.date);
-    groups.set(key, [...(groups.get(key) ?? []), task]);
-  });
-  return Array.from(groups.entries()).map(([weekStart, rows]) => ({
-    weekStart,
-    newCount: sumTasks(rows, "boundNewWordCount"),
-    reviewCount: sumTasks(rows, "plannedReviewCount"),
-    backlogCount: sumTasks(rows, "learningBacklogCount"),
-    overdueCount: sumTasks(rows, "overdueReviewCount")
-  }));
-}
-
-function sumTasks(tasks: DailyTaskSummary[], field: keyof Pick<DailyTaskSummary, "boundNewWordCount" | "plannedReviewCount" | "learningBacklogCount" | "overdueReviewCount">): number {
-  return tasks.reduce((sum, task) => sum + Number(task[field]), 0);
 }
 
 function downloadText(filename: string, text: string, type: string) {

@@ -322,7 +322,10 @@ label {
 .log-list,
 .recommendation-list,
 .daily-list,
-.card-list {
+.card-list,
+.week-card-grid,
+.heatmap-grid,
+.timeline-list {
   display: grid;
   gap: 10px;
 }
@@ -443,6 +446,83 @@ th {
   align-items: center;
 }
 
+.week-card-grid {
+  grid-template-columns: repeat(7, minmax(120px, 1fr));
+}
+
+.plan-day-card,
+.heatmap-day,
+.timeline-list article {
+  border: 1px solid #e4ebe8;
+  border-radius: 8px;
+  padding: 12px;
+  background: #fbfdfb;
+}
+
+.day-card-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.day-card-head span,
+.plan-day-card small,
+.timeline-list span,
+.timeline-list small,
+.heatmap-day small,
+.heatmap-day em {
+  color: #64746f;
+  display: block;
+  font-size: 13px;
+  font-style: normal;
+}
+
+.day-card-metrics {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  margin: 10px 0;
+  font-size: 13px;
+}
+
+.plan-day-card p,
+.timeline-list p {
+  color: #52635e;
+  margin: 8px 0 0;
+}
+
+.heatmap-grid {
+  grid-template-columns: repeat(7, minmax(74px, 1fr));
+}
+
+.heatmap-day {
+  min-height: 96px;
+}
+
+.pressure-light {
+  background: #eef7f1;
+}
+
+.pressure-normal {
+  background: #f8fbf9;
+}
+
+.pressure-high {
+  background: #fff7df;
+  border-color: #efd58c;
+}
+
+.pressure-over {
+  background: #fdebed;
+  border-color: #e8a7ad;
+}
+
+.pressure-rest {
+  background: #f1f3f2;
+  color: #65736f;
+}
+
 .word-card strong,
 .word-card p,
 .word-card small {
@@ -496,7 +576,9 @@ th {
   .two-column,
   .form-grid,
   .recommendation-list,
-  .book-select-list {
+  .book-select-list,
+  .week-card-grid,
+  .heatmap-grid {
     grid-template-columns: 1fr;
   }
 
