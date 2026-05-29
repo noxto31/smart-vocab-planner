@@ -40,6 +40,7 @@
 - `docs/development_plan.md`
 - `docs/ai_planning_contract.md`
 - `docs/v0.2.0_acceptance.md`
+- `docs/v0.2.0_pr_description.md`
 
 ### 完成的功能
 
@@ -93,3 +94,4 @@ TypeScript 与 Vite 生产构建通过
 - v0.2.0 分支已推送：`origin/codex/v0.2.0-learning-loop`。
 - GitHub 返回 PR 创建入口：`https://github.com/noxto31/smart-vocab-planner/pull/new/codex/v0.2.0-learning-loop`。
 - 当前环境无 `gh` / `hub`；尝试通过 `winget install GitHub.cli` 安装 GitHub CLI 超时，已停止残留进程。PR 创建可能需要后续在有 GitHub CLI 或网页权限的环境中完成。
+- 已补充 `docs/v0.2.0_pr_description.md`，可直接作为 PR 描述草稿。
