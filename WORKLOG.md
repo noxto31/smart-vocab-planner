@@ -89,5 +89,7 @@ TypeScript 与 Vite 生产构建通过
 ### GitHub 状态
 
 - v0.1.0 tag 已推送。
-- v0.2.0 分支待最终提交、推送和创建 PR。
+- v0.2.0 主提交：`a730fcd`，提交信息 `feat: implement v0.2.0 word-level learning and dynamic planning loop`。
+- v0.2.0 分支已推送：`origin/codex/v0.2.0-learning-loop`。
+- GitHub 返回 PR 创建入口：`https://github.com/noxto31/smart-vocab-planner/pull/new/codex/v0.2.0-learning-loop`。
 - 当前环境无 `gh` / `hub`；尝试通过 `winget install GitHub.cli` 安装 GitHub CLI 超时，已停止残留进程。PR 创建可能需要后续在有 GitHub CLI 或网页权限的环境中完成。
