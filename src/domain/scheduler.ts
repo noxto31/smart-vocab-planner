@@ -112,6 +112,7 @@ export function generateWordLevelPlan(input: GeneratePlanInput): GeneratedPlanRe
   }
 
   const timestamp = nowIso();
+  const availableWords = selectAvailableWords(input.words, input.wordProgress);
   const selectedWords = selectWordsForGoal(input.words, input.goal, input.wordProgress);
   const targetWords = selectedWords.slice(0, Math.min(input.goal.targetRequiredCount, selectedWords.length));
   const progressMap = new Map(input.wordProgress.map((item) => [item.wordId, { ...item }]));
@@ -215,10 +216,10 @@ export function generateWordLevelPlan(input: GeneratePlanInput): GeneratedPlanRe
     reviewAssignments,
     existingDailyTasks: input.existingDailyTasks ?? [],
     bufferDates,
-    coverage: computeCoverageStatus(input.goal, selectedWords, Array.from(progressMap.values()), newAssignments, reviewAssignments, input.asOfDate)
+    coverage: computeCoverageStatus(input.goal, availableWords, selectedWords, Array.from(progressMap.values()), newAssignments, reviewAssignments, input.asOfDate)
   });
 
-  const coverage = computeCoverageStatus(input.goal, selectedWords, Array.from(progressMap.values()), newAssignments, reviewAssignments, input.asOfDate);
+  const coverage = computeCoverageStatus(input.goal, availableWords, selectedWords, Array.from(progressMap.values()), newAssignments, reviewAssignments, input.asOfDate);
   const requiredDailyAverage = computeRequiredDailyAverage(coverage.targetRequiredCount - coverage.completedWordCount, effectiveDates.length);
   const dailyLimitGap = Math.max(0, requiredDailyAverage - input.goal.dailyNewWordLimit);
   const remainingConcreteNewWords = targetWords.filter((word) => !completedSet.has(word.id)).length;
@@ -294,14 +295,16 @@ export const generateStudyPlan = generateWordLevelPlan;
 
 export function computeCoverageStatus(
   goal: LearningGoal,
-  selectedWords: WordItem[],
+  availableWords: WordItem[],
+  enabledWords: WordItem[],
   wordProgress: WordProgress[],
   newAssignments: DailyNewWordAssignment[],
   reviewAssignments: DailyReviewAssignment[],
   asOfDate: LocalDateString
 ): PlanCoverageStatus {
-  const availableWordCount = selectedWords.length;
-  const selectedWordIds = new Set(selectedWords.slice(0, Math.min(goal.targetRequiredCount, selectedWords.length)).map((word) => word.id));
+  const availableWordCount = availableWords.length;
+  const enabledWordCount = enabledWords.length;
+  const selectedWordIds = new Set(enabledWords.slice(0, Math.min(goal.targetRequiredCount, enabledWords.length)).map((word) => word.id));
   const progressByWord = new Map(wordProgress.map((progress) => [progress.wordId, progress]));
   const assignedWordIds = new Set<string>();
   const completedWordIds = new Set<string>();
@@ -355,15 +358,15 @@ export function computeCoverageStatus(
   return {
     targetRequiredCount: goal.targetRequiredCount,
     availableWordCount,
-    enabledWordCount: availableWordCount,
+    enabledWordCount,
     assignedWordCount: assignedWordIds.size,
     completedWordCount: completedWordIds.size,
     reviewingWordCount: reviewingWordIds.size,
     masteredWordCount: masteredWordIds.size,
-    inventoryGapCount: Math.max(0, goal.targetRequiredCount - availableWordCount),
+    inventoryGapCount: Math.max(0, goal.targetRequiredCount - enabledWordCount),
     learningBacklogCount: backlogWordIds.size,
     overdueReviewCount: overdueReviewWordIds.size
-  };
+};
 }
 
 export function applyNewWordResult(input: NewWordResultInput): NewWordResultOutput {
@@ -517,6 +520,13 @@ export function selectWordsForGoal(words: WordItem[], goal: LearningGoal, progre
     }))
     .sort((a, b) => b.score - a.score || a.word.normalizedWord.localeCompare(b.word.normalizedWord) || a.word.id.localeCompare(b.word.id))
     .map((item) => item.word);
+}
+
+export function selectAvailableWords(words: WordItem[], progress: WordProgress[] = []): WordItem[] {
+  const excludedWordIds = new Set(progress.filter((item) => item.state === "excluded").map((item) => item.wordId));
+  return words
+    .filter((word) => !excludedWordIds.has(word.id))
+    .sort((a, b) => a.normalizedWord.localeCompare(b.normalizedWord) || a.id.localeCompare(b.id));
 }
 
 function createInitialProgress(word: WordItem, timestamp: string): WordProgress {

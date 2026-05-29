@@ -79,6 +79,32 @@ TypeScript 与 Vite 生产构建通过
 
 - `package.json` 未提供 `lint` 或 `typecheck` 脚本；类型检查已由 `npm.cmd run build` 中的 `tsc --noEmit` 覆盖。
 
+## 2026-05-29 - v0.3.0 正式发布前修复
+
+### 远程状态复核
+
+- 默认主分支：`master`，`origin/HEAD -> origin/master`。
+- 开发分支：`codex/v0.3.0-smart-vocab-beta` 已存在。
+- 实际已存在远程 `v0.3.0` tag，但 GitHub Releases 页面显示没有 Release。
+- 仓库原先没有 `.github/workflows` 发布工作流。
+
+### 修复内容
+
+- 修复 `availableWordCount` 与 `enabledWordCount` 语义混淆：`availableWordCount` 统计全部可用去重词，`enabledWordCount` 只统计当前目标已启用且参与计划计算的词。
+- 修复 AI 建议应用记录误记：`saveGoal` 不再仅凭 `goalInputMode: natural_language` 写 AI 应用记录；只有显式传入 `appliedAdviceId` 时才记录应用。
+- 更新 UI 展示，首页和长期计划页分别展示可供给词量与已启用词量。
+- 新增 `.github/workflows/release-on-tag.yml`，在 `v*` tag 推送时由 GitHub Actions 执行 `npm ci`、`npm test`、`npm run build` 并创建 Release。
+
+### 修复后验证
+
+```text
+npm.cmd test
+4 个测试文件，34 个测试通过
+
+npm.cmd run build
+TypeScript 与 Vite 生产构建通过
+```
+
 ## 2026-05-29 - v0.2.1 修复
 
 ### 版本与快照
@@ -170,9 +196,9 @@ TypeScript 与 Vite 生产构建通过
 - 快照分支已推送：`origin/snapshot/v0.2.0-reviewed-before-v0.2.1` -> `2942df8e952c5d148aa56df942e3639400dc51e8`。
 - v0.2.1 修复分支已推送：`origin/codex/v0.2.1-daily-settlement-fix` -> `a5c5aaa5c8b2e115663cc852d7adef1202a19e1c`。
 - GitHub 返回 PR 创建入口：`https://github.com/noxto31/smart-vocab-planner/pull/new/codex/v0.2.1-daily-settlement-fix`。
-- PR 未能由当前环境自动创建：本机无 `gh` / `hub`，且未配置 `GITHUB_TOKEN`。
+- PR 未能由当前环境自动创建：本机无 `gh` / `hub`，且未配置可用的 GitHub 自动化认证。
 - v0.2.1 进入正式合并与发布流程。
-- 当前环境无 `gh` / `hub`，且未配置 `GITHUB_TOKEN`；若仍无法创建 GitHub Release，将保留 release notes 供网页手动创建。
+- 当前环境无 `gh` / `hub`，且未配置可用的 GitHub 自动化认证；若仍无法创建 GitHub Release，将保留 release notes 供网页手动创建。
 
 ## 2026-05-29 - v0.2.0 开发
 

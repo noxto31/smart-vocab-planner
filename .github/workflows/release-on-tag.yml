@@ -1,0 +1,75 @@
+name: Release on tag
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Verify and publish GitHub Release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+      - name: Verify remote tag
+        run: |
+          git fetch --tags --force
+          git rev-parse --verify "refs/tags/${GITHUB_REF_NAME}"
+
+      - name: Prepare release metadata
+        id: meta
+        shell: bash
+        run: |
+          title="${GITHUB_REF_NAME}"
+          notes_file="docs/${GITHUB_REF_NAME}_release_notes.md"
+
+          if [ "${GITHUB_REF_NAME}" = "v0.3.0" ]; then
+            title="v0.3.0 - 智能背词规划与数据一致性正式版"
+            notes_file="docs/v0.3.0_release_notes.md"
+          fi
+
+          if [ ! -f "${notes_file}" ]; then
+            echo "Release notes file not found: ${notes_file}" >&2
+            exit 1
+          fi
+
+          echo "title=${title}" >> "$GITHUB_OUTPUT"
+          echo "notes_file=${notes_file}" >> "$GITHUB_OUTPUT"
+
+      - name: Create release if needed
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            echo "Release $GITHUB_REF_NAME already exists; skipping creation."
+            exit 0
+          fi
+
+          gh release create "$GITHUB_REF_NAME" \
+            --verify-tag \
+            --title "${{ steps.meta.outputs.title }}" \
+            --notes-file "${{ steps.meta.outputs.notes_file }}" \
+            --latest
