@@ -66,6 +66,25 @@ TypeScript 与 Vite 生产构建通过
 
 - `Invoke-WebRequest http://127.0.0.1:5173`：返回 200。
 
+### 最终发布前验证
+
+```text
+git fetch origin --tags
+git checkout codex/v0.2.1-daily-settlement-fix
+git pull origin codex/v0.2.1-daily-settlement-fix
+
+npm.cmd test
+3 个测试文件，25 个测试通过
+
+npm.cmd run build
+TypeScript 与 Vite 生产构建通过
+```
+
+- 确认 `master` 合并前仍位于 v0.1.0 基线提交。
+- 确认本地 tag 仅有 `v0.1.0`，发布前不存在 `v0.2.1` tag。
+- 确认 `package.json` 版本号为 `0.2.1`。
+- 已准备 `docs/v0.2.1_release_notes.md`，用于当前环境无法直接创建 GitHub Release 时手动发布。
+
 ### 发布状态
 
 - 修复提交：`a5c5aaa5c8b2e115663cc852d7adef1202a19e1c`，提交信息 `fix: implement v0.2.1 daily settlement and task consistency repair`。
@@ -73,9 +92,8 @@ TypeScript 与 Vite 生产构建通过
 - v0.2.1 修复分支已推送：`origin/codex/v0.2.1-daily-settlement-fix` -> `a5c5aaa5c8b2e115663cc852d7adef1202a19e1c`。
 - GitHub 返回 PR 创建入口：`https://github.com/noxto31/smart-vocab-planner/pull/new/codex/v0.2.1-daily-settlement-fix`。
 - PR 未能由当前环境自动创建：本机无 `gh` / `hub`，且未配置 `GITHUB_TOKEN`。
-- v0.2.1 尚未正式发布。
-- 不创建 v0.2.1 tag 或 Release。
-- 等待在具备 GitHub 网页或 CLI 权限的环境中创建 PR，随后进入验收。
+- v0.2.1 进入正式合并与发布流程。
+- 当前环境无 `gh` / `hub`，且未配置 `GITHUB_TOKEN`；若仍无法创建 GitHub Release，将保留 release notes 供网页手动创建。
 
 ## 2026-05-29 - v0.2.0 开发
 
