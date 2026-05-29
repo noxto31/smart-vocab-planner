@@ -1,5 +1,57 @@
 # WORKLOG
 
+## 2026-05-29 - v0.3.0 启动与设计冻结
+
+### 远程状态核对
+
+- 当前仓库：`https://github.com/noxto31/smart-vocab-planner.git`。
+- 当前默认主分支：`master`，`origin/HEAD -> origin/master`。
+- `master` 最新 commit：`7f3db39a57994f3032be05c6336080b78bcd1f05`。
+- `v0.1.0` tag 指向：`9e61c3df1a2780dd2b5c12b3bf46a5d7115ec916`。
+- `codex/v0.2.0-learning-loop` 最新 commit：`2942df8e952c5d148aa56df942e3639400dc51e8`。
+- `codex/v0.2.1-daily-settlement-fix` 最新 commit：`06e177025efa142cc794daad5c60c0f588d6f849`。
+- 实际存在 `v0.2.1` tag，指向 `master` 合并提交 `7f3db39a57994f3032be05c6336080b78bcd1f05`；这与本轮任务中“尚未创建 v0.2.1 tag”的说明不一致。
+- GitHub Releases 页面显示当前没有 Release；本机无 `gh` CLI，无法用 CLI 查询或创建 Release。
+- 本轮开始时不存在远程 `codex/v0.3.0-smart-vocab-beta` 分支，不存在 `v0.3.0` tag。
+
+### v0.2.1 技术基线确认
+
+- 已切换并拉取 `codex/v0.2.1-daily-settlement-fix`，远程已是最新。
+- `package.json` 版本号为 `0.2.1`。
+- README、CHANGELOG、WORKLOG 已描述具体单词学习和当日结算修复。
+- `tests/serviceSettlement.test.ts` 存在并覆盖逐词操作、主动结算、跨日自动结算和幂等性。
+- `src/services/plannerService.ts` 中逐词新词和复习保存均调用 `generateAndSavePlan` 时传入 `preserveOpenDates`，同日其他任务保持开放。
+- `settleDailyTasks` 和 `settlePastOpenTasks` 存在。
+- `src/domain/backup.ts` 支持 v0.2.1/v0.2.0/v0.1.0 备份解析和 legacy 迁移。
+
+### 基线验证
+
+```text
+npm.cmd test
+3 个测试文件，25 个测试通过
+
+npm.cmd run build
+TypeScript 与 Vite 生产构建通过
+```
+
+### 快照与 v0.3.0 分支
+
+- 已创建并推送快照分支：`snapshot/v0.2.1-technical-baseline-before-v0.3.0` -> `06e177025efa142cc794daad5c60c0f588d6f849`。
+- 已从 v0.2.1 技术基线创建开发分支：`codex/v0.3.0-smart-vocab-beta`。
+- 已提交 `chore: start v0.3.0 beta branch`，将 `package.json` 和 `package-lock.json` 版本号更新为 `0.3.0`。
+
+### 设计冻结文档
+
+- 新增 `docs/v0.3.0_product_scope.md`。
+- 新增 `docs/v0.3.0_user_flows.md`。
+- 新增 `docs/v0.3.0_data_model.md`。
+- 新增 `docs/v0.3.0_scheduling_contract.md`。
+- 新增 `docs/v0.3.0_ai_planning_contract.md`。
+- 新增 `docs/v0.3.0_migration_plan.md`。
+- 新增 `docs/v0.3.0_acceptance.md`。
+- 新增 `docs/v0.3.0_implementation_plan.md`。
+- 同步更新 README、CHANGELOG、AGENTS 和 TASK_FULL，将 v0.3.0 边界改为开发目标，不虚构未实现能力。
+
 ## 2026-05-29 - v0.2.1 修复
 
 ### 版本与快照
