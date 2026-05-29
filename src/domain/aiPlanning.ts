@@ -34,6 +34,9 @@ export function validatePlanningSuggestion(
   if (suggestion.suggestedTargetWordCount <= 0 || !Number.isInteger(suggestion.suggestedTargetWordCount)) {
     errors.push("建议目标词量必须是正整数");
   }
+  if (suggestion.requiresWordbookImport || suggestion.isReferenceOnly) {
+    errors.push("无法生成可靠新增词量：请先导入目标词表或使用演示模式");
+  }
   if (currentGoal && suggestion.suggestedDailyNewWordRange) {
     const [min, max] = suggestion.suggestedDailyNewWordRange;
     if (max > currentGoal.dailyNewWordLimit * 2) {
@@ -57,10 +60,22 @@ function buildLocalSuggestion(input: PlanningAdviceInput): AIPlanningSuggestion 
   const lower = text.toLowerCase();
   const targetType = inferTargetType(text, lower);
   const needsFoundation = /基础|不稳|薄弱|弱|补|四级过了/.test(text);
-  const suggestedTargetWordCount = inferTargetCount(targetType, needsFoundation);
-  const range = inferDailyRange(input.currentGoal ?? null, suggestedTargetWordCount);
   const executableBooks = (input.wordBooks ?? []).filter((book) => (book.actualWordCount ?? book.importedWordCount ?? 0) > 0);
+  const hasExecutableTargetBook = executableBooks.some((book) => book.targetType === targetType);
+  const lacksReliableTargetInventory = targetType !== "CUSTOM" && !hasExecutableTargetBook;
+  const referenceWordCountRange = getReferenceWordCountRange(targetType);
+  const suggestedTargetWordCount = lacksReliableTargetInventory
+    ? Math.max(1, input.currentGoal?.targetRequiredCount ?? input.coverage?.enabledWordCount ?? 1)
+    : inferTargetCount(targetType, needsFoundation);
+  const range = inferDailyRange(input.currentGoal ?? null, suggestedTargetWordCount);
   const inventoryGapCount = Math.max(0, suggestedTargetWordCount - (input.coverage?.enabledWordCount ?? executableBooks.reduce((sum, book) => sum + (book.actualWordCount ?? 0), 0)));
+  const stageCounts = lacksReliableTargetInventory
+    ? { foundation: 0, core: 0, sprint: 0 }
+    : {
+        foundation: Math.round(suggestedTargetWordCount * (needsFoundation ? 0.35 : 0.2)),
+        core: Math.round(suggestedTargetWordCount * 0.55),
+        sprint: Math.max(0, suggestedTargetWordCount - Math.round(suggestedTargetWordCount * (needsFoundation ? 0.35 : 0.2)) - Math.round(suggestedTargetWordCount * 0.55))
+      };
 
   return {
     id: `suggestion:${Date.now()}`,
@@ -71,23 +86,26 @@ function buildLocalSuggestion(input: PlanningAdviceInput): AIPlanningSuggestion 
     suggestedTargetWordCount,
     suggestedDailyNewWordRange: range,
     inventoryGapCount,
+    requiresWordbookImport: lacksReliableTargetInventory,
+    isReferenceOnly: lacksReliableTargetInventory,
+    referenceWordCountRange: referenceWordCountRange,
     suggestedStages: [
       {
         name: "基础补齐",
         purpose: needsFoundation ? "先补足高频基础词和薄弱词" : "快速确认基础词是否存在明显缺口",
-        suggestedWordCount: Math.round(suggestedTargetWordCount * (needsFoundation ? 0.35 : 0.2)),
+        suggestedWordCount: stageCounts.foundation,
         role: "foundation"
       },
       {
         name: `${targetType} 核心`,
-        purpose: "学习目标考试或用途的核心词",
-        suggestedWordCount: Math.round(suggestedTargetWordCount * 0.55),
+        purpose: lacksReliableTargetInventory ? "需先导入目标词表，才能确认核心学习量" : "学习目标考试或用途的核心词",
+        suggestedWordCount: stageCounts.core,
         role: "core"
       },
       {
         name: "复习冲刺",
         purpose: "降低新词压力，集中处理复习、逾期和重点遗忘词",
-        suggestedWordCount: Math.max(0, suggestedTargetWordCount - Math.round(suggestedTargetWordCount * (needsFoundation ? 0.35 : 0.2)) - Math.round(suggestedTargetWordCount * 0.55)),
+        suggestedWordCount: stageCounts.sprint,
         role: "sprint"
       }
     ],
@@ -117,7 +135,9 @@ function buildLocalSuggestion(input: PlanningAdviceInput): AIPlanningSuggestion 
         importRequirement: "可作为候选补充词书，不应在未导入时参与排期"
       }
     ],
-    explanation: `当前使用本地规则模式生成建议。建议目标 ${suggestedTargetWordCount} 词，每日新词建议 ${range[0]}-${range[1]} 个；当前预计词库缺口 ${inventoryGapCount} 个。`
+    explanation: lacksReliableTargetInventory
+      ? `当前还没有导入目标词表或完成基础评估，无法生成可靠新增词量。建议先导入目标词表或使用演示模式；${TARGET_REFERENCE_LABELS[targetType] ?? "参考范围差异较大"}，这只是参考范围，不是最终计划词量。`
+      : `当前使用本地规则模式生成建议。建议目标 ${suggestedTargetWordCount} 词，每日新词建议 ${range[0]}-${range[1]} 个；当前预计目标词表缺口 ${inventoryGapCount} 个。`
   };
 }
 
@@ -151,6 +171,27 @@ function inferTargetCount(targetType: TargetType, needsFoundation: boolean): num
     CUSTOM: 600
   };
   return base[targetType] + (needsFoundation ? 200 : 0);
+}
+
+const TARGET_REFERENCE_LABELS: Partial<Record<TargetType, string>> = {
+  CET4: "四级新增词量需要结合已掌握基础和导入词表判断",
+  CET6: "六级新增词量通常受四级基础和目标词表范围影响很大",
+  POSTGRAD: "考研英语新增词量需要结合目标词表和基础测评判断",
+  IELTS: "雅思新增词量需要结合学术词表和当前基础判断",
+  TOEFL: "托福新增词量需要结合学术词表和当前基础判断",
+  GRE: "GRE 新增词量跨度很大，需要先确认目标词表"
+};
+
+function getReferenceWordCountRange(targetType: TargetType): [number, number] | undefined {
+  const ranges: Partial<Record<TargetType, [number, number]>> = {
+    CET4: [600, 1800],
+    CET6: [1200, 3000],
+    POSTGRAD: [1500, 3500],
+    IELTS: [1500, 4000],
+    TOEFL: [1500, 4000],
+    GRE: [2500, 6000]
+  };
+  return ranges[targetType];
 }
 
 function inferDailyRange(goal: LearningGoal | null, targetCount: number): [number, number] {

@@ -226,7 +226,7 @@ describe("v0.3.0 智能背词 Beta 验收", () => {
     expect(output.reviewRecord.result).toBe("forgot");
   });
 
-  it("v0.3.0 备份往返和异常备份导入安全失败", async () => {
+  it("v0.4.0 备份往返和异常备份导入安全失败", async () => {
     await importWordText(makeCsv(8), "csv");
     const goal = await saveGoal(makeGoal({ targetRequiredCount: 8 }));
     await generateAndSavePlan(goal, goal.startDate, "initial", "测试备份");
@@ -243,10 +243,10 @@ describe("v0.3.0 智能背词 Beta 验收", () => {
     expect(await db.weeklyReviews.count()).toBeGreaterThan(0);
   });
 
-  it("v0.1.0 legacy 备份迁移为 v0.3.0 且不伪造具体单词历史", () => {
+  it("v0.1.0 legacy 备份迁移为当前结构且不伪造具体单词历史", () => {
     const restored = parseBackupData(JSON.stringify(makeLegacyBackup()));
 
-    expect(restored.backupVersion).toBe("v0.3.0");
+    expect(restored.backupVersion).toBe("v0.4.0");
     expect(restored.migrationMeta.sourceBackupVersion).toBe("v0.1.0");
     expect(restored.legacyProgressRecords).toHaveLength(1);
     expect(restored.dailyNewAssignments).toHaveLength(0);

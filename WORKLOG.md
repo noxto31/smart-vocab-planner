@@ -1,5 +1,81 @@
 # WORKLOG
 
+## 2026-05-30 - v0.4.0 启动与基线核查
+
+### 远程与发布状态
+
+- 当前仓库：`https://github.com/noxto31/smart-vocab-planner.git`。
+- 当前默认主分支：`master`，本地执行 `git pull origin master` 后显示 `Already up to date`。
+- 本轮开发分支：`codex/v0.4.0-dynamic-recovery-calendar-ui`。
+- `master` 当前 commit：`f88b103a5a8a2addb823d86dffd2a96d76b6edf7`。
+- `v0.3.0` 为 annotated tag，`v0.3.0^{commit}` 指向：`f88b103a5a8a2addb823d86dffd2a96d76b6edf7`。
+- GitHub Release 页面已核对存在 `v0.3.0 - 智能背词规划与数据一致性正式版`，发布提交为 `f88b103`。
+- 本机无 `gh` CLI，后续若无法自动创建 v0.4.0 Release，将生成 `docs/v0.4.0_release_notes.md` 并说明需手动发布。
+
+### v0.3.0 基线确认
+
+- 已实际读取 `package.json`、`README.md`、`CHANGELOG.md`、`WORKLOG.md`、`docs/`、`src/` 和 `tests/`。
+- 当前 `src/domain/scheduler.ts` 已包含具体单词新词任务、具体复习任务、词库缺口、学习待补、逾期复习、阶段计划、周度复盘和月度复盘。
+- 当前 `src/services/plannerService.ts` 已包含逐词保存、主动结算、跨日自动结算、备份导入导出、目标版本和本地规则式 AI 建议。
+- 当前测试包含 `scheduler.test.ts`、`serviceSettlement.test.ts`、`importBackup.test.ts` 和 `v030Acceptance.test.ts`，覆盖 v0.3.0 核心回归。
+- 本轮开始前工作区存在未跟踪文件 `smart-vocab-planner-0.3.0.zip`，本轮不纳入修改。
+
+### 本轮范围冻结
+
+- 版本号更新为 `0.4.0`。
+- 本轮只处理动态进度恢复、计划视图重构和中文产品用词统一。
+- 不扩充真实词书库，不接入真实 AI API，不新增发音、例句、拼写训练、登录、云同步或移动端发布。
+
+### v0.4.0 设计冻结文档
+
+- 新增 `docs/v0.4.0_dynamic_recovery_algorithm.md`，冻结缺课/少背后的待补学计算、负荷模型、平滑分摊、复习高峰避让和不可行解释。
+- 新增 `docs/v0.4.0_plan_views.md`，冻结今日卡片、周计划卡片、月历/热力图、阶段时间轴和详细明细的展示职责。
+- 新增 `docs/v0.4.0_language_guidelines.md`，冻结中文产品用词、内部状态映射和禁止裸露术语。
+- 新增 `docs/v0.4.0_acceptance.md`，冻结动态恢复、计划视图、中文用词、六级目标建议和发布验收场景。
+
+### 动态恢复实现
+
+- `src/domain/scheduler.ts` 新增 `REVIEW_LOAD_WEIGHT = 0.6`，每日总负荷按“新词 + 复习 * 0.6”计算。
+- 新词安排从按日期顺序填满改为按未来日期总负荷选择低压日期，待补学与未开始新词共同平滑分摊。
+- 逾期复习重排改为优先放入复习数量较低的日期。
+- `DailyTaskSummary` 增加原计划新词、待补学新词、调整后新词、总负荷、舒适负荷、硬上限、动态调整标记和中文可解释原因。
+- 不可行状态增加 `newWordOverflowCount`，说明仍有多少新词无法放入截止日前学习日。
+
+### 计划视图实现
+
+- 新增 `src/domain/planViews.ts`，提供今日任务卡片、周计划卡片、月历热力图、阶段时间轴和详细明细视图模型。
+- `src/App.tsx` 将“长期计划”主页面重构为计划总览、周计划、本月负荷热力图、阶段时间轴和详细明细。
+- 原每日表格保留为“详细明细”，不再作为唯一计划展示。
+- `src/styles.css` 增加周卡、热力图、阶段时间轴和压力状态样式。
+
+### 中文用词与六级建议
+
+- 新增 `src/domain/labels.ts`，集中维护任务压力、计划状态、新词任务、复习任务、词条状态、复习结果、词书状态和阶段状态的中文映射。
+- 页面指标调整为“本期目标词数”“已导入词汇总数”“已纳入当前计划”“目标词表缺口”“待补学”“任务压力”等表达。
+- 本地规则式智能规划建议在没有真实目标词表时标记为仅参考，不再生成“六级 900 词”这类正式精确建议。
+- 对仅参考建议，界面提示先导入目标词表或使用演示模式，不能直接应用为执行目标。
+
+### 新增测试
+
+- 新增 `tests/v040DynamicRecovery.test.ts`：覆盖漏学一天平滑分摊、少完成一部分平滑分摊、复习高峰日避让和每日上限不足。
+- 新增 `tests/v040PlanViews.test.ts`：覆盖今日卡片、周计划、月历热力图、阶段时间轴和详细明细。
+- 新增 `tests/v040Language.test.ts`：覆盖中文状态映射和无真实词表时六级建议不生成 900 词。
+- 更新 `tests/serviceSettlement.test.ts`、`tests/scheduler.test.ts`、`tests/importBackup.test.ts` 和 `tests/v030Acceptance.test.ts` 以适配 v0.4.0 平滑安排和备份版本。
+
+### 当前验证结果
+
+```text
+npm.cmd test
+7 个测试文件，46 个测试通过
+
+npm.cmd run build
+TypeScript 与 Vite 生产构建通过
+```
+
+- 本地 Vite 服务 `http://127.0.0.1:5173` 返回 HTTP 200。
+- Codex in-app Browser 插件两次启动均失败，错误摘要为 `windows sandbox failed: spawn setup refresh`；已记录为浏览器自动化验证受环境限制，未作为功能失败。
+- 已新增 `docs/v0.4.0_release_notes.md`，供当前环境无法创建 GitHub Release 时手动发布使用。
+
 ## 2026-05-29 - v0.3.0 启动与设计冻结
 
 ### 远程状态核对
