@@ -1,5 +1,6 @@
 import { addDays, compareDates, getLocalTimeZone, nowIso, todayInTimezone } from "../domain/date";
 import { createBackupData, parseBackupData } from "../domain/backup";
+import { buildLocalPlanningAdvice } from "../domain/aiPlanning";
 import { importWordsFromCsv, importWordsFromJson, mergeWordItems } from "../domain/importWords";
 import { buildDemoGoal, buildDemoWords, DEMO_WORD_BOOKS } from "../domain/sampleData";
 import {
@@ -11,17 +12,24 @@ import {
 } from "../domain/scheduler";
 import type {
   AIPlanningSuggestion,
+  AIAdviceApplicationRecord,
+  AIPlanningAdvice,
   BackupData,
+  DailySettlementRecord,
   DailyNewWordAssignment,
   DailyReviewAssignment,
   DailyTaskSummary,
   GeneratedPlanResult,
+  GoalVersionRecord,
   LegacyProgressRecord,
+  MonthlyReviewRecord,
   PlanAdjustmentLog,
   ReviewHistoryRecord,
   ReviewResult,
+  StagePlan,
   StudyPlan,
   UserGoal,
+  WeeklyReviewRecord,
   WordBook,
   WordItem,
   WordProgress
@@ -38,6 +46,13 @@ export interface AppDataState {
   dailyNewAssignments: DailyNewWordAssignment[];
   dailyReviewAssignments: DailyReviewAssignment[];
   reviewHistory: ReviewHistoryRecord[];
+  goalVersions: GoalVersionRecord[];
+  stagePlans: StagePlan[];
+  dailySettlements: DailySettlementRecord[];
+  weeklyReviews: WeeklyReviewRecord[];
+  monthlyReviews: MonthlyReviewRecord[];
+  aiPlanningAdvices: AIPlanningAdvice[];
+  aiAdviceApplications: AIAdviceApplicationRecord[];
   legacyProgressRecords: LegacyProgressRecord[];
   adjustmentLogs: PlanAdjustmentLog[];
 }
@@ -70,6 +85,13 @@ export async function loadAllData(): Promise<AppDataState> {
     dailyNewAssignments,
     dailyReviewAssignments,
     reviewHistory,
+    goalVersions,
+    stagePlans,
+    dailySettlements,
+    weeklyReviews,
+    monthlyReviews,
+    aiPlanningAdvices,
+    aiAdviceApplications,
     legacyProgressRecords,
     adjustmentLogs
   ] = await Promise.all([
@@ -82,6 +104,13 @@ export async function loadAllData(): Promise<AppDataState> {
     db.dailyNewAssignments.toArray(),
     db.dailyReviewAssignments.toArray(),
     db.reviewHistory.toArray(),
+    db.goalVersions.toArray(),
+    db.stagePlans.toArray(),
+    db.dailySettlements.toArray(),
+    db.weeklyReviews.toArray(),
+    db.monthlyReviews.toArray(),
+    db.aiPlanningAdvices.toArray(),
+    db.aiAdviceApplications.toArray(),
     db.legacyProgressRecords.toArray(),
     db.adjustmentLogs.toArray()
   ]);
@@ -96,15 +125,29 @@ export async function loadAllData(): Promise<AppDataState> {
     dailyNewAssignments: dailyNewAssignments.sort((a, b) => compareDates(a.date, b.date) || a.wordId.localeCompare(b.wordId)),
     dailyReviewAssignments: dailyReviewAssignments.sort((a, b) => compareDates(a.date, b.date) || a.wordId.localeCompare(b.wordId)),
     reviewHistory: reviewHistory.sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
+    goalVersions: goalVersions.sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
+    stagePlans: stagePlans.sort((a, b) => compareDates(a.startDate, b.startDate)),
+    dailySettlements: dailySettlements.sort((a, b) => compareDates(a.date, b.date)),
+    weeklyReviews: weeklyReviews.sort((a, b) => compareDates(a.weekStart, b.weekStart)),
+    monthlyReviews: monthlyReviews.sort((a, b) => a.month.localeCompare(b.month)),
+    aiPlanningAdvices: aiPlanningAdvices.sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
+    aiAdviceApplications: aiAdviceApplications.sort((a, b) => b.appliedAt.localeCompare(a.appliedAt)),
     legacyProgressRecords: legacyProgressRecords.sort((a, b) => compareDates(a.date, b.date)),
     adjustmentLogs: adjustmentLogs.sort((a, b) => b.createdAt.localeCompare(a.createdAt))
   };
 }
 
 export async function saveGoal(goal: UserGoal): Promise<UserGoal> {
+  const previous = await db.goals.get(goal.id);
   const updatedGoal = { ...goal, updatedAt: nowIso() };
-  await db.goals.put(updatedGoal);
-  return updatedGoal;
+  const version = await buildGoalVersionRecord(previous ?? null, updatedGoal, previous ? "用户修改目标或计划参数" : "创建执行目标");
+  const goalWithVersion = { ...updatedGoal, activeGoalVersionId: version.id };
+  version.confirmedGoal = goalWithVersion;
+  await db.transaction("rw", db.goals, db.goalVersions, async () => {
+    await db.goals.put(goalWithVersion);
+    await db.goalVersions.put(version);
+  });
+  return goalWithVersion;
 }
 
 export async function loadDemoDataset(): Promise<ImportServiceResult> {
@@ -144,8 +187,8 @@ export async function createDemoGoalAndPlan(): Promise<GeneratedPlanResult> {
     ...buildDemoGoal(startDate, deadline, Math.max(1, Math.min(72, words.length || 72))),
     timezone
   };
-  await saveGoal(goal);
-  return generateAndSavePlan(goal, startDate, "initial", "载入演示目标并生成具体单词计划");
+  const savedGoal = await saveGoal(goal);
+  return generateAndSavePlan(savedGoal, startDate, "initial", "载入演示目标并生成具体单词计划");
 }
 
 export async function importWordText(text: string, format: "csv" | "json"): Promise<ImportServiceResult> {
@@ -233,7 +276,17 @@ export async function generateAndSavePlan(
 
   await db.transaction(
     "rw",
-    [db.studyPlans, db.dailyTasks, db.dailyNewAssignments, db.dailyReviewAssignments, db.wordProgress, db.adjustmentLogs],
+    [
+      db.studyPlans,
+      db.dailyTasks,
+      db.dailyNewAssignments,
+      db.dailyReviewAssignments,
+      db.wordProgress,
+      db.stagePlans,
+      db.weeklyReviews,
+      db.monthlyReviews,
+      db.adjustmentLogs
+    ],
     async () => {
       await Promise.all([
         db.studyPlans.put(result.plan),
@@ -241,6 +294,9 @@ export async function generateAndSavePlan(
         replaceByGoal(db.dailyNewAssignments, goal.id, result.newAssignments),
         replaceByGoal(db.dailyReviewAssignments, goal.id, result.reviewAssignments),
         db.wordProgress.bulkPut(result.wordProgress),
+        replaceByGoal(db.stagePlans, goal.id, result.stagePlans),
+        replaceByGoal(db.weeklyReviews, goal.id, result.weeklyReviewRecords),
+        replaceByGoal(db.monthlyReviews, goal.id, result.monthlyReviewRecords),
         db.adjustmentLogs.put(result.adjustmentLog)
       ]);
     }
@@ -373,7 +429,7 @@ export async function settleDailyTasks(input: {
     });
   });
 
-  await db.transaction("rw", db.dailyNewAssignments, db.dailyReviewAssignments, db.wordProgress, db.reviewHistory, async () => {
+  await db.transaction("rw", [db.dailyNewAssignments, db.dailyReviewAssignments, db.wordProgress, db.reviewHistory, db.dailySettlements], async () => {
     await Promise.all([
       db.dailyNewAssignments.bulkPut(newOutputs.map((output) => output.assignment)),
       db.dailyReviewAssignments.bulkPut(reviewOutputs.map((output) => output.assignment)),
@@ -395,12 +451,23 @@ export async function settleDailyTasks(input: {
     input.mode === "auto" ? [addDays(input.date, 1)] : []
   );
 
-  return {
+  const result = {
     date: input.date,
     settledNewWordCount: openNewAssignments.length,
     settledReviewCount: openReviewAssignments.length,
     replanned: true
   };
+  await db.dailySettlements.put({
+    id: `settlement:${input.goalId}:${input.date}:${input.mode}`,
+    goalId: input.goalId,
+    date: input.date,
+    mode: input.mode,
+    settledNewWordCount: result.settledNewWordCount,
+    settledReviewCount: result.settledReviewCount,
+    replanned: result.replanned,
+    createdAt: nowIso()
+  });
+  return result;
 }
 
 export async function settlePastOpenTasks(input: {
@@ -438,26 +505,21 @@ export async function settlePastOpenTasks(input: {
 }
 
 export async function analyzeNaturalLanguageGoal(text: string): Promise<AIPlanningSuggestion> {
-  const lower = text.toLowerCase();
-  const isIelts = text.includes("雅思") || lower.includes("ielts");
-  const isCet6 = text.includes("六级") || lower.includes("cet6");
-  const isCet4 = text.includes("四级") || lower.includes("cet4");
-  const targetType = isIelts ? "IELTS" : isCet6 ? "CET6" : isCet4 ? "CET4" : "CUSTOM";
-  const suggestedTargetWordCount = isIelts ? 1200 : isCet6 ? 900 : isCet4 ? 650 : 500;
+  const currentGoal = (await db.goals.orderBy("updatedAt").reverse().first()) ?? null;
+  const coverage = currentGoal ? await getCurrentCoverage(currentGoal) : null;
+  const advice = buildLocalPlanningAdvice({
+    text,
+    currentGoal,
+    coverage,
+    wordBooks: await db.wordBooks.toArray(),
+    mode: "local_rule",
+    adviceType: "goal_parse"
+  });
+  await db.aiPlanningAdvices.put(advice);
   return {
-    interpretedGoal: text.trim() || "希望建立一个可持续的词汇学习计划",
-    targetType,
-    suggestedTargetWordCount,
-    suggestedStages: [
-      { name: "基础补齐", purpose: "先补足高频基础词和薄弱词", suggestedWordCount: Math.round(suggestedTargetWordCount * 0.35) },
-      { name: "目标强化", purpose: "学习目标考试或用途的核心词", suggestedWordCount: Math.round(suggestedTargetWordCount * 0.45) },
-      { name: "复习冲刺", purpose: "降低新词压力，集中处理复习和欠缺任务", suggestedWordCount: Math.round(suggestedTargetWordCount * 0.2) }
-    ],
-    recommendedBookCategories: [
-      { name: "基础高频词", role: "补基础", reason: "用于降低目标词书直接学习的门槛" },
-      { name: `${targetType} 核心词`, role: "主词书", reason: "与当前目标最直接相关，导入后可生成真实任务" }
-    ],
-    explanation: "当前版本使用本地 mock 解析目标，不调用真实 AI API。建议应用前仍会经过本地目标和容量校验。"
+    ...advice.suggestion,
+    id: advice.id,
+    validationErrors: advice.validationErrors
   };
 }
 
@@ -473,6 +535,13 @@ export async function exportBackup(): Promise<BackupData> {
     dailyNewAssignments: data.dailyNewAssignments,
     dailyReviewAssignments: data.dailyReviewAssignments,
     reviewHistory: data.reviewHistory,
+    goalVersions: data.goalVersions,
+    stagePlans: data.stagePlans,
+    dailySettlements: data.dailySettlements,
+    weeklyReviews: data.weeklyReviews,
+    monthlyReviews: data.monthlyReviews,
+    aiPlanningAdvices: data.aiPlanningAdvices,
+    aiAdviceApplications: data.aiAdviceApplications,
     legacyProgressRecords: data.legacyProgressRecords,
     adjustmentLogs: data.adjustmentLogs
   });
@@ -480,11 +549,12 @@ export async function exportBackup(): Promise<BackupData> {
 
 export async function importBackup(text: string): Promise<BackupData> {
   const backup = parseBackupData(text);
-  await clearAllData();
   await db.transaction(
     "rw",
     [
       db.goals,
+      db.goalVersions,
+      db.stagePlans,
       db.wordBooks,
       db.words,
       db.wordProgress,
@@ -493,12 +563,39 @@ export async function importBackup(text: string): Promise<BackupData> {
       db.dailyNewAssignments,
       db.dailyReviewAssignments,
       db.reviewHistory,
+      db.dailySettlements,
+      db.weeklyReviews,
+      db.monthlyReviews,
+      db.aiPlanningAdvices,
+      db.aiAdviceApplications,
       db.legacyProgressRecords,
       db.adjustmentLogs
     ],
     async () => {
       await Promise.all([
+        db.goals.clear(),
+        db.goalVersions.clear(),
+        db.stagePlans.clear(),
+        db.wordBooks.clear(),
+        db.words.clear(),
+        db.wordProgress.clear(),
+        db.studyPlans.clear(),
+        db.dailyTasks.clear(),
+        db.dailyNewAssignments.clear(),
+        db.dailyReviewAssignments.clear(),
+        db.reviewHistory.clear(),
+        db.dailySettlements.clear(),
+        db.weeklyReviews.clear(),
+        db.monthlyReviews.clear(),
+        db.aiPlanningAdvices.clear(),
+        db.aiAdviceApplications.clear(),
+        db.legacyProgressRecords.clear(),
+        db.adjustmentLogs.clear()
+      ]);
+      await Promise.all([
         db.goals.bulkPut(backup.goals),
+        db.goalVersions.bulkPut(backup.goalVersions),
+        db.stagePlans.bulkPut(backup.stagePlans),
         db.wordBooks.bulkPut(backup.wordBooks),
         db.words.bulkPut(backup.words),
         db.wordProgress.bulkPut(backup.wordProgress),
@@ -507,6 +604,11 @@ export async function importBackup(text: string): Promise<BackupData> {
         db.dailyNewAssignments.bulkPut(backup.dailyNewAssignments),
         db.dailyReviewAssignments.bulkPut(backup.dailyReviewAssignments),
         db.reviewHistory.bulkPut(backup.reviewHistory),
+        db.dailySettlements.bulkPut(backup.dailySettlements),
+        db.weeklyReviews.bulkPut(backup.weeklyReviews),
+        db.monthlyReviews.bulkPut(backup.monthlyReviews),
+        db.aiPlanningAdvices.bulkPut(backup.aiPlanningAdvices),
+        db.aiAdviceApplications.bulkPut(backup.aiAdviceApplications),
         db.legacyProgressRecords.bulkPut(backup.legacyProgressRecords),
         db.adjustmentLogs.bulkPut(backup.adjustmentLogs)
       ]);
@@ -553,6 +655,11 @@ function mergeBooks(existingBooks: WordBook[], incomingBooks: WordBook[]): WordB
       ...(byId.get(book.id) ?? book),
       ...book,
       hasImportedWords: book.hasImportedWords || byId.get(book.id)?.hasImportedWords || false,
+      status: book.status ?? (book.hasImportedWords ? "imported" : byId.get(book.id)?.status ?? "recommended"),
+      role: book.role ?? byId.get(book.id)?.role ?? (book.isFoundation ? "foundation" : book.isTargetBook ? "core" : "custom"),
+      priority: book.priority ?? byId.get(book.id)?.priority ?? (book.isFoundation ? 80 : book.isTargetBook ? 70 : 40),
+      importedWordCount: book.importedWordCount ?? byId.get(book.id)?.importedWordCount ?? 0,
+      duplicateWordCount: book.duplicateWordCount ?? byId.get(book.id)?.duplicateWordCount ?? 0,
       importedAt: book.hasImportedWords ? nowIso() : byId.get(book.id)?.importedAt
     });
   });
@@ -562,8 +669,42 @@ function mergeBooks(existingBooks: WordBook[], incomingBooks: WordBook[]): WordB
 function withActualBookCounts(books: WordBook[], words: WordItem[]): WordBook[] {
   return books.map((book) => ({
     ...book,
-    actualWordCount: words.filter((word) => word.sourceBookIds.includes(book.id)).length
+    actualWordCount: words.filter((word) => word.sourceBookIds.includes(book.id)).length,
+    status: resolveBookStatus(book, words),
+    importedWordCount: words.filter((word) => word.sourceBookIds.includes(book.id)).length
   }));
+}
+
+async function buildGoalVersionRecord(previous: UserGoal | null, next: UserGoal, reason: string): Promise<GoalVersionRecord> {
+  const existing = await db.goalVersions.where("goalId").equals(next.id).toArray();
+  const version = existing.reduce((max, item) => Math.max(max, item.version), 0) + 1;
+  const timestamp = nowIso();
+  return {
+    id: `goal-version:${next.id}:${version}:${Date.now()}`,
+    goalId: next.id,
+    version,
+    createdAt: timestamp,
+    reason,
+    originalInput: next.originalGoalText ?? next.interpretedGoal ?? next.targetDescription,
+    confirmedGoal: next,
+    previousTargetRequiredCount: previous?.targetRequiredCount,
+    nextTargetRequiredCount: next.targetRequiredCount,
+    previousSelectedBookIds: previous?.selectedBookIds ?? [],
+    nextSelectedBookIds: next.selectedBookIds,
+    beforePressure: previous ? `每日新词上限 ${previous.dailyNewWordLimit}，每日复习上限 ${previous.dailyReviewLimit}` : undefined,
+    afterPressure: `每日新词上限 ${next.dailyNewWordLimit}，每日复习上限 ${next.dailyReviewLimit}`
+  };
+}
+
+function resolveBookStatus(book: WordBook, words: WordItem[]): WordBook["status"] {
+  const actual = words.some((word) => word.sourceBookIds.includes(book.id));
+  if (actual && (book.enabledForGoalIds?.length ?? 0) > 0) {
+    return "enabled";
+  }
+  if (actual || book.hasImportedWords) {
+    return "imported";
+  }
+  return book.status ?? "recommended";
 }
 
 function isOpenNewAssignment(status: DailyNewWordAssignment["status"]): boolean {
