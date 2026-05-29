@@ -143,9 +143,13 @@ export async function saveGoal(goal: UserGoal): Promise<UserGoal> {
   const version = await buildGoalVersionRecord(previous ?? null, updatedGoal, previous ? "用户修改目标或计划参数" : "创建执行目标");
   const goalWithVersion = { ...updatedGoal, activeGoalVersionId: version.id };
   version.confirmedGoal = goalWithVersion;
-  await db.transaction("rw", db.goals, db.goalVersions, async () => {
+  const adviceApplication = await buildAdviceApplicationRecord(previous ?? null, goalWithVersion);
+  await db.transaction("rw", db.goals, db.goalVersions, db.aiAdviceApplications, async () => {
     await db.goals.put(goalWithVersion);
     await db.goalVersions.put(version);
+    if (adviceApplication) {
+      await db.aiAdviceApplications.put(adviceApplication);
+    }
   });
   return goalWithVersion;
 }
@@ -693,6 +697,26 @@ async function buildGoalVersionRecord(previous: UserGoal | null, next: UserGoal,
     nextSelectedBookIds: next.selectedBookIds,
     beforePressure: previous ? `每日新词上限 ${previous.dailyNewWordLimit}，每日复习上限 ${previous.dailyReviewLimit}` : undefined,
     afterPressure: `每日新词上限 ${next.dailyNewWordLimit}，每日复习上限 ${next.dailyReviewLimit}`
+  };
+}
+
+async function buildAdviceApplicationRecord(previous: UserGoal | null, next: UserGoal): Promise<AIAdviceApplicationRecord | null> {
+  if (next.goalInputMode !== "natural_language") {
+    return null;
+  }
+  const advice = await db.aiPlanningAdvices.orderBy("createdAt").reverse().first();
+  if (!advice) {
+    return null;
+  }
+  return {
+    id: `ai-application:${advice.id}:${Date.now()}`,
+    adviceId: advice.id,
+    goalId: next.id,
+    appliedAt: nowIso(),
+    beforeGoal: previous ?? next,
+    afterGoal: next,
+    impactSummary: `确认应用建议：目标词量 ${previous?.targetRequiredCount ?? "-"} -> ${next.targetRequiredCount}，词书范围 ${previous?.selectedBookIds.join("/") ?? "-"} -> ${next.selectedBookIds.join("/") || "全部已导入词"}`,
+    localValidationPassed: advice.validationStatus !== "invalid"
   };
 }
 

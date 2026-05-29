@@ -35,6 +35,16 @@ describe("v0.3.0 智能背词 Beta 验收", () => {
     expect(after?.targetRequiredCount).toBe(before?.targetRequiredCount);
     expect(await db.aiPlanningAdvices.count()).toBe(1);
     expect(await db.dailyNewAssignments.count()).toBe(20);
+
+    await saveGoal({
+      ...goal,
+      goalInputMode: "natural_language",
+      originalGoalText: "我三个月后准备考六级，现在词汇比较弱，希望安排一个实际能完成的背词计划。",
+      interpretedGoal: suggestion.interpretedGoal,
+      targetType: suggestion.targetType,
+      targetRequiredCount: suggestion.suggestedTargetWordCount
+    });
+    expect(await db.aiAdviceApplications.count()).toBe(1);
   });
 
   it("保存目标和生成计划会写入目标版本、阶段计划、周度复盘和月度复盘", async () => {
