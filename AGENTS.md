@@ -6,7 +6,7 @@ smart-vocab-planner（智能背单词计划安排器）
 
 ## 当前版本方向
 
-当前开发目标是 v0.2.1：逐词操作与当日结算一致性修复版。
+当前开发目标是 v0.3.0：完整智能背词 Beta 版。
 
 项目不再限定为“只做数量规划工具”。现行定位是：
 
@@ -34,7 +34,8 @@ smart-vocab-planner（智能背单词计划安排器）
 
 ## 数据兼容
 
-- v0.2.1 使用 Dexie v2 数据结构。
+- v0.3.0 目标是在 Dexie v2 技术基线基础上升级到 Dexie v3 数据结构。
+- v0.2.1 数据必须可迁移到 v0.3.0。
 - v0.1.0 备份可导入，但旧数量记录只能作为 legacy 历史保留，不得随机映射到具体单词。
 
 ## 必须维护的文件
@@ -49,6 +50,14 @@ smart-vocab-planner（智能背单词计划安排器）
 - `docs/ai_planning_contract.md`
 - `docs/v0.2.0_acceptance.md`
 - `docs/v0.2.1_acceptance.md`
+- `docs/v0.3.0_product_scope.md`
+- `docs/v0.3.0_user_flows.md`
+- `docs/v0.3.0_data_model.md`
+- `docs/v0.3.0_scheduling_contract.md`
+- `docs/v0.3.0_ai_planning_contract.md`
+- `docs/v0.3.0_migration_plan.md`
+- `docs/v0.3.0_acceptance.md`
+- `docs/v0.3.0_implementation_plan.md`
 
 ## 验证命令
 

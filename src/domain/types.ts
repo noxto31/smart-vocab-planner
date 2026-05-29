@@ -38,6 +38,21 @@ export type ReviewAssignmentStatus = "planned" | "completed" | "overdue" | "resc
 
 export type ReviewResult = "forgot" | "vague" | "known" | "easy" | "not_completed";
 
+export type WordBookStatus = "recommended" | "imported" | "enabled" | "candidate" | "disabled";
+
+export type WordBookRole = "foundation" | "core" | "extension" | "sprint" | "custom";
+
+export type StageRole = "foundation" | "core" | "extension" | "sprint";
+
+export type AIServiceMode = "local_rule" | "ai_assisted";
+
+export type AIAdviceType =
+  | "goal_parse"
+  | "book_recommendation"
+  | "plan_adjustment"
+  | "weekly_diagnosis"
+  | "monthly_diagnosis";
+
 export type AdjustmentTrigger =
   | "initial"
   | "daily_learning_result"
@@ -54,18 +69,24 @@ export interface LearningGoal {
   goalInputMode: GoalInputMode;
   originalGoalText?: string;
   interpretedGoal?: string;
+  targetDescription?: string;
+  foundationDescription?: string;
+  needsFoundationRepair?: boolean;
   targetType: TargetType;
   targetRequiredCount: number;
   startDate: LocalDateString;
   deadline: LocalDateString;
   dailyNewWordLimit: number;
   dailyReviewLimit: number;
+  studyDaysPerWeek?: number;
   restWeekdays: Weekday[];
   bufferDayRatio: number;
   planStyle: PlanStyle;
   timezone: string;
   selectedBookIds: string[];
   allowBookRecommendation: boolean;
+  aiPlanningEnabled?: boolean;
+  activeGoalVersionId?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -100,6 +121,13 @@ export interface WordBook {
   actualWordCount?: number;
   sourceDescription: string;
   hasImportedWords: boolean;
+  status?: WordBookStatus;
+  role?: WordBookRole;
+  enabledForGoalIds?: string[];
+  priority?: number;
+  importedWordCount?: number;
+  duplicateWordCount?: number;
+  coverageNote?: string;
   recommendationTags: string[];
   isFoundation: boolean;
   isTargetBook: boolean;
@@ -116,6 +144,9 @@ export interface WordItem {
   sourceBookNames: string[];
   level?: string;
   tags: string[];
+  priorityScore?: number;
+  priorityReasons?: string[];
+  stageHint?: StageRole;
   createdAt: string;
   updatedAt: string;
 }
@@ -128,7 +159,13 @@ export interface WordProgress {
   lastReviewDate?: LocalDateString;
   nextReviewDate?: LocalDateString;
   reviewStage?: number;
+  reviewCount?: number;
+  recentReviewResult?: ReviewResult;
   lapseCount: number;
+  overdueCount?: number;
+  isDifficult?: boolean;
+  difficultyReason?: string;
+  goalIds?: string[];
   sourceBookIds: string[];
   updatedAt: string;
 }
@@ -173,8 +210,11 @@ export interface ReviewHistoryRecord {
 export interface PlanCoverageStatus {
   targetRequiredCount: number;
   availableWordCount: number;
+  enabledWordCount: number;
   assignedWordCount: number;
   completedWordCount: number;
+  reviewingWordCount: number;
+  masteredWordCount: number;
   inventoryGapCount: number;
   learningBacklogCount: number;
   overdueReviewCount: number;
@@ -238,6 +278,10 @@ export interface PlanAdjustmentLog {
   afterSnapshot: PlanCoverageStatus;
   affectedDates: LocalDateString[];
   explanation: string;
+  goalChanged?: boolean;
+  bookScopeChanged?: boolean;
+  beforePressure?: string;
+  afterPressure?: string;
 }
 
 export interface LongTermPlanSummary {
@@ -280,12 +324,122 @@ export interface WeeklyPlanSummary {
   completionRate: number;
 }
 
+export interface GoalVersionRecord {
+  id: string;
+  goalId: string;
+  version: number;
+  createdAt: string;
+  reason: string;
+  originalInput?: string;
+  interpretedSuggestion?: AIPlanningSuggestion;
+  confirmedGoal: LearningGoal;
+  previousTargetRequiredCount?: number;
+  nextTargetRequiredCount: number;
+  previousSelectedBookIds: string[];
+  nextSelectedBookIds: string[];
+  beforePressure?: string;
+  afterPressure?: string;
+}
+
+export interface StagePlan {
+  id: string;
+  goalId: string;
+  goalVersionId?: string;
+  name: string;
+  role: StageRole;
+  startDate: LocalDateString;
+  endDate: LocalDateString;
+  plannedNewWordCount: number;
+  plannedReviewCount: number;
+  targetBookIds: string[];
+  status: "planned" | "active" | "completed" | "atRisk";
+  riskNote: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface DailySettlementRecord {
+  id: string;
+  goalId: string;
+  date: LocalDateString;
+  mode: "manual" | "auto";
+  settledNewWordCount: number;
+  settledReviewCount: number;
+  replanned: boolean;
+  createdAt: string;
+}
+
+export interface WeeklyReviewRecord {
+  id: string;
+  goalId: string;
+  weekStart: LocalDateString;
+  weekEnd: LocalDateString;
+  plannedNewWords: number;
+  actualNewWords: number;
+  plannedReviews: number;
+  actualReviews: number;
+  newLearningBacklog: number;
+  newOverdueReviews: number;
+  newlyMasteredWords: number;
+  difficultWordCount: number;
+  inventoryGapChange: number;
+  nextWeekLoadChange: number;
+  status: FeasibilityStatus;
+  explanation: string;
+  createdAt: string;
+}
+
+export interface MonthlyReviewRecord {
+  id: string;
+  goalId: string;
+  month: string;
+  stageGoal: string;
+  plannedNewWords: number;
+  actualNewWords: number;
+  plannedReviews: number;
+  actualReviews: number;
+  masteredWords: number;
+  reviewPressure: number;
+  importedWordCount: number;
+  accumulatedBacklog: number;
+  longTermStatus: FeasibilityStatus;
+  nextMonthExpectedLoad: number;
+  explanation: string;
+  createdAt: string;
+}
+
+export interface AIPlanningAdvice {
+  id: string;
+  createdAt: string;
+  mode: AIServiceMode;
+  adviceType: AIAdviceType;
+  inputSummary: string;
+  suggestion: AIPlanningSuggestion;
+  validationStatus: "valid" | "invalid" | "fallback";
+  validationErrors: string[];
+  failureReason?: string;
+}
+
+export interface AIAdviceApplicationRecord {
+  id: string;
+  adviceId: string;
+  goalId: string;
+  appliedAt: string;
+  beforeGoal: LearningGoal;
+  afterGoal: LearningGoal;
+  impactSummary: string;
+  localValidationPassed: boolean;
+}
+
 export interface GeneratedPlanResult {
   plan: StudyPlan;
   dailyTasks: DailyTaskSummary[];
   newAssignments: DailyNewWordAssignment[];
   reviewAssignments: DailyReviewAssignment[];
   wordProgress: WordProgress[];
+  stagePlans: StagePlan[];
+  weeklyReviewRecords: WeeklyReviewRecord[];
+  monthlyReviewRecords: MonthlyReviewRecord[];
   longTerm: LongTermPlanSummary;
   monthlyPlans: MonthlyPlanSummary[];
   weeklyPlans: WeeklyPlanSummary[];
@@ -293,20 +447,30 @@ export interface GeneratedPlanResult {
 }
 
 export interface AIPlanningSuggestion {
+  id?: string;
+  mode?: AIServiceMode;
+  adviceType?: AIAdviceType;
   interpretedGoal: string;
   targetType: TargetType;
   suggestedTargetWordCount: number;
+  suggestedDailyNewWordRange?: [number, number];
+  inventoryGapCount?: number;
   suggestedStages: Array<{
     name: string;
     purpose: string;
     suggestedWordCount: number;
+    role?: StageRole;
   }>;
   recommendedBookCategories: Array<{
     name: string;
     role: string;
     reason: string;
+    expectedWordCount?: number;
+    hasExecutableWords?: boolean;
+    importRequirement?: string;
   }>;
   explanation: string;
+  validationErrors?: string[];
 }
 
 export interface BackupDataV2 {
@@ -326,6 +490,36 @@ export interface BackupDataV2 {
   adjustmentLogs: PlanAdjustmentLog[];
 }
 
+export interface BackupDataV3 {
+  schemaVersion: 3;
+  backupVersion: "v0.3.0";
+  softwareVersion: "0.3.0";
+  exportedAt: string;
+  migrationMeta: {
+    sourceBackupVersion?: string;
+    migratedAt: string;
+    notes: string[];
+  };
+  goals: LearningGoal[];
+  goalVersions: GoalVersionRecord[];
+  stagePlans: StagePlan[];
+  wordBooks: WordBook[];
+  words: WordItem[];
+  wordProgress: WordProgress[];
+  studyPlans: StudyPlan[];
+  dailyTasks: DailyTaskSummary[];
+  dailyNewAssignments: DailyNewWordAssignment[];
+  dailyReviewAssignments: DailyReviewAssignment[];
+  reviewHistory: ReviewHistoryRecord[];
+  dailySettlements: DailySettlementRecord[];
+  weeklyReviews: WeeklyReviewRecord[];
+  monthlyReviews: MonthlyReviewRecord[];
+  aiPlanningAdvices: AIPlanningAdvice[];
+  aiAdviceApplications: AIAdviceApplicationRecord[];
+  legacyProgressRecords: LegacyProgressRecord[];
+  adjustmentLogs: PlanAdjustmentLog[];
+}
+
 export interface BackupDataV1 {
   schemaVersion: 1;
   exportedAt: string;
@@ -339,4 +533,6 @@ export interface BackupDataV1 {
   adjustmentLogs: unknown[];
 }
 
-export type BackupData = BackupDataV2;
+export type BackupData = BackupDataV3;
+
+export type SupportedBackupData = BackupDataV1 | BackupDataV2 | BackupDataV3;

@@ -1,5 +1,84 @@
 # WORKLOG
 
+## 2026-05-29 - v0.3.0 启动与设计冻结
+
+### 远程状态核对
+
+- 当前仓库：`https://github.com/noxto31/smart-vocab-planner.git`。
+- 当前默认主分支：`master`，`origin/HEAD -> origin/master`。
+- `master` 最新 commit：`7f3db39a57994f3032be05c6336080b78bcd1f05`。
+- `v0.1.0` tag 指向：`9e61c3df1a2780dd2b5c12b3bf46a5d7115ec916`。
+- `codex/v0.2.0-learning-loop` 最新 commit：`2942df8e952c5d148aa56df942e3639400dc51e8`。
+- `codex/v0.2.1-daily-settlement-fix` 最新 commit：`06e177025efa142cc794daad5c60c0f588d6f849`。
+- 实际存在 `v0.2.1` tag，指向 `master` 合并提交 `7f3db39a57994f3032be05c6336080b78bcd1f05`；这与本轮任务中“尚未创建 v0.2.1 tag”的说明不一致。
+- GitHub Releases 页面显示当前没有 Release；本机无 `gh` CLI，无法用 CLI 查询或创建 Release。
+- 本轮开始时不存在远程 `codex/v0.3.0-smart-vocab-beta` 分支，不存在 `v0.3.0` tag。
+
+### v0.2.1 技术基线确认
+
+- 已切换并拉取 `codex/v0.2.1-daily-settlement-fix`，远程已是最新。
+- `package.json` 版本号为 `0.2.1`。
+- README、CHANGELOG、WORKLOG 已描述具体单词学习和当日结算修复。
+- `tests/serviceSettlement.test.ts` 存在并覆盖逐词操作、主动结算、跨日自动结算和幂等性。
+- `src/services/plannerService.ts` 中逐词新词和复习保存均调用 `generateAndSavePlan` 时传入 `preserveOpenDates`，同日其他任务保持开放。
+- `settleDailyTasks` 和 `settlePastOpenTasks` 存在。
+- `src/domain/backup.ts` 支持 v0.2.1/v0.2.0/v0.1.0 备份解析和 legacy 迁移。
+
+### 基线验证
+
+```text
+npm.cmd test
+3 个测试文件，25 个测试通过
+
+npm.cmd run build
+TypeScript 与 Vite 生产构建通过
+```
+
+### 快照与 v0.3.0 分支
+
+- 已创建并推送快照分支：`snapshot/v0.2.1-technical-baseline-before-v0.3.0` -> `06e177025efa142cc794daad5c60c0f588d6f849`。
+- 已从 v0.2.1 技术基线创建开发分支：`codex/v0.3.0-smart-vocab-beta`。
+- 已提交 `chore: start v0.3.0 beta branch`，将 `package.json` 和 `package-lock.json` 版本号更新为 `0.3.0`。
+
+### 设计冻结文档
+
+- 新增 `docs/v0.3.0_product_scope.md`。
+- 新增 `docs/v0.3.0_user_flows.md`。
+- 新增 `docs/v0.3.0_data_model.md`。
+- 新增 `docs/v0.3.0_scheduling_contract.md`。
+- 新增 `docs/v0.3.0_ai_planning_contract.md`。
+- 新增 `docs/v0.3.0_migration_plan.md`。
+- 新增 `docs/v0.3.0_acceptance.md`。
+- 新增 `docs/v0.3.0_implementation_plan.md`。
+- 同步更新 README、CHANGELOG、AGENTS 和 TASK_FULL，将 v0.3.0 边界改为开发目标，不虚构未实现能力。
+
+### 核心实现
+
+- 扩展 `src/domain/types.ts`：新增目标版本历史、阶段计划、词书状态、每日结算记录、周度复盘、月度复盘、AI 建议和 AI 应用记录。
+- 升级 `src/storage/db.ts` 到 Dexie v3，并为 v0.2.1 数据补齐初始目标版本、词书状态和单词进度扩展字段。
+- 升级 `src/domain/backup.ts` 到 v0.3.0 schema 3，兼容 v0.1.0、v0.2.0、v0.2.1 备份迁移。
+- 新增 `src/domain/aiPlanning.ts`，实现本地规则规划建议、结构校验和失败降级边界。
+- 扩展 `src/domain/scheduler.ts`：生成阶段计划、周度复盘、月度复盘，补齐 `enabledWordCount`、`reviewingWordCount`、`masteredWordCount`，并按词书和阶段优先级选择具体单词。
+- 扩展 `src/services/plannerService.ts`：保存目标时写目标版本，确认自然语言建议后写 AI 应用记录，重排时写阶段和周月复盘，结算时写每日结算记录，导入备份在事务内清空和恢复。
+- 更新 `src/App.tsx`：页面结构调整为今日任务、目标与阶段计划、背词执行、长期计划、词书与词库、学习历史、设置与数据，并展示目标历史、阶段、词书状态、词条历史、复习历史和复盘数据。
+
+### 新增测试
+
+- 新增 `tests/v030Acceptance.test.ts`，覆盖自然语言建议不自动应用、AI 应用记录、目标版本、阶段计划、周月复盘、词书推荐状态、具体词选择优先级、重点遗忘词、v0.3.0 备份往返、异常备份安全失败和 v0.1.0 legacy 迁移。
+- 更新 `tests/importBackup.test.ts` 和 `tests/serviceSettlement.test.ts`，将备份期望升级为 v0.3.0，同时保留 v0.2.0/v0.1.0 兼容验证。
+
+### 当前验证结果
+
+```text
+npm.cmd test
+4 个测试文件，32 个测试通过
+
+npm.cmd run build
+TypeScript 与 Vite 生产构建通过
+```
+
+- `package.json` 未提供 `lint` 或 `typecheck` 脚本；类型检查已由 `npm.cmd run build` 中的 `tsc --noEmit` 覆盖。
+
 ## 2026-05-29 - v0.2.1 修复
 
 ### 版本与快照

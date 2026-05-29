@@ -19,13 +19,16 @@ import type {
   LocalDateString,
   LongTermPlanSummary,
   MonthlyPlanSummary,
+  MonthlyReviewRecord,
   NewWordAssignmentStatus,
   PlanAdjustmentLog,
   PlanCoverageStatus,
   PlanStyle,
   ReviewHistoryRecord,
   ReviewResult,
+  StagePlan,
   StudyPlan,
+  WeeklyReviewRecord,
   WeeklyPlanSummary,
   WordItem,
   WordProgress
@@ -270,12 +273,18 @@ export function generateWordLevelPlan(input: GeneratePlanInput): GeneratedPlanRe
   };
 
   const summaries = summarizePlan(input.goal, plan, dailyTasks, input.asOfDate);
+  const stagePlans = buildStagePlans(input.goal, plan, dailyTasks, input.asOfDate, timestamp);
+  const weeklyReviewRecords = buildWeeklyReviewRecords(input.goal, summaries.weeklyPlans, Array.from(progressMap.values()), plan, timestamp);
+  const monthlyReviewRecords = buildMonthlyReviewRecords(input.goal, stagePlans, summaries.monthlyPlans, Array.from(progressMap.values()), plan, timestamp);
   return {
     plan,
     dailyTasks,
     newAssignments,
     reviewAssignments,
     wordProgress: Array.from(progressMap.values()).sort((a, b) => a.wordId.localeCompare(b.wordId)),
+    stagePlans,
+    weeklyReviewRecords,
+    monthlyReviewRecords,
     adjustmentLog,
     ...summaries
   };
@@ -297,6 +306,8 @@ export function computeCoverageStatus(
   const assignedWordIds = new Set<string>();
   const completedWordIds = new Set<string>();
   const backlogWordIds = new Set<string>();
+  const reviewingWordIds = new Set<string>();
+  const masteredWordIds = new Set<string>();
 
   newAssignments.forEach((assignment) => {
     if (!selectedWordIds.has(assignment.wordId)) {
@@ -321,6 +332,12 @@ export function computeCoverageStatus(
     if (progress.state === "learned" || progress.state === "reviewing" || progress.state === "mastered") {
       completedWordIds.add(progress.wordId);
     }
+    if (progress.state === "learned" || progress.state === "reviewing") {
+      reviewingWordIds.add(progress.wordId);
+    }
+    if (progress.state === "mastered") {
+      masteredWordIds.add(progress.wordId);
+    }
     if (progress.state === "learning_backlog") {
       backlogWordIds.add(progress.wordId);
     }
@@ -338,8 +355,11 @@ export function computeCoverageStatus(
   return {
     targetRequiredCount: goal.targetRequiredCount,
     availableWordCount,
+    enabledWordCount: availableWordCount,
     assignedWordCount: assignedWordIds.size,
     completedWordCount: completedWordIds.size,
+    reviewingWordCount: reviewingWordIds.size,
+    masteredWordCount: masteredWordIds.size,
     inventoryGapCount: Math.max(0, goal.targetRequiredCount - availableWordCount),
     learningBacklogCount: backlogWordIds.size,
     overdueReviewCount: overdueReviewWordIds.size
@@ -364,6 +384,12 @@ export function applyNewWordResult(input: NewWordResultInput): NewWordResultOutp
       firstLearnedDate: baseProgress.firstLearnedDate ?? input.assignment.date,
       reviewStage: input.result === "mastered" ? REVIEW_INTERVALS.length : 0,
       nextReviewDate: input.result === "mastered" ? undefined : addDays(input.assignment.date, REVIEW_INTERVALS[0]),
+      reviewCount: baseProgress.reviewCount ?? 0,
+      recentReviewResult: baseProgress.recentReviewResult,
+      isDifficult: baseProgress.isDifficult ?? false,
+      difficultyReason: baseProgress.difficultyReason,
+      overdueCount: baseProgress.overdueCount ?? 0,
+      goalIds: Array.from(new Set([...(baseProgress.goalIds ?? []), input.assignment.goalId])),
       sourceBookIds: input.word.sourceBookIds,
       updatedAt: timestamp
     };
@@ -389,6 +415,10 @@ export function applyNewWordResult(input: NewWordResultInput): NewWordResultOutp
       ...baseProgress,
       state: "learning_backlog",
       firstAssignedDate: baseProgress.firstAssignedDate ?? input.assignment.date,
+      reviewCount: baseProgress.reviewCount ?? 0,
+      isDifficult: baseProgress.isDifficult ?? false,
+      overdueCount: baseProgress.overdueCount ?? 0,
+      goalIds: Array.from(new Set([...(baseProgress.goalIds ?? []), input.assignment.goalId])),
       sourceBookIds: input.word.sourceBookIds,
       updatedAt: timestamp
     }
@@ -419,6 +449,11 @@ export function applyReviewResult(input: ReviewResultInput): ReviewResultOutput 
       progress: {
         ...input.progress,
         nextReviewDate: input.assignment.date,
+        recentReviewResult: input.result,
+        reviewCount: (input.progress.reviewCount ?? 0) + 1,
+        overdueCount: (input.progress.overdueCount ?? 0) + 1,
+        isDifficult: resolveDifficultFlag(input.progress, input.result),
+        difficultyReason: resolveDifficultyReason(input.progress, input.result),
         updatedAt: timestamp
       },
       reviewRecord
@@ -439,7 +474,11 @@ export function applyReviewResult(input: ReviewResultInput): ReviewResultOutput 
     lastReviewDate: input.assignment.date,
     nextReviewDate: next.nextDate ? addDays(input.assignment.date, next.nextDate) : undefined,
     reviewStage: next.nextStage,
+    reviewCount: (input.progress.reviewCount ?? 0) + 1,
+    recentReviewResult: input.result,
     lapseCount: input.progress.lapseCount + (input.result === "forgot" ? 1 : 0),
+    isDifficult: resolveDifficultFlag(input.progress, input.result),
+    difficultyReason: resolveDifficultyReason(input.progress, input.result),
     updatedAt: timestamp
   };
 
@@ -461,6 +500,7 @@ export function applyReviewResult(input: ReviewResultInput): ReviewResultOutput 
 
 export function selectWordsForGoal(words: WordItem[], goal: LearningGoal, progress: WordProgress[] = []): WordItem[] {
   const excludedWordIds = new Set(progress.filter((item) => item.state === "excluded").map((item) => item.wordId));
+  const progressByWord = new Map(progress.map((item) => [item.wordId, item]));
   return words
     .filter((word) => {
       if (excludedWordIds.has(word.id)) {
@@ -471,7 +511,12 @@ export function selectWordsForGoal(words: WordItem[], goal: LearningGoal, progre
       }
       return word.sourceBookIds.some((bookId) => goal.selectedBookIds.includes(bookId));
     })
-    .sort((a, b) => a.normalizedWord.localeCompare(b.normalizedWord));
+    .map((word) => ({
+      word,
+      score: computeWordPriority(word, goal, progressByWord.get(word.id))
+    }))
+    .sort((a, b) => b.score - a.score || a.word.normalizedWord.localeCompare(b.word.normalizedWord) || a.word.id.localeCompare(b.word.id))
+    .map((item) => item.word);
 }
 
 function createInitialProgress(word: WordItem, timestamp: string): WordProgress {
@@ -480,6 +525,10 @@ function createInitialProgress(word: WordItem, timestamp: string): WordProgress 
     state: "not_started",
     lapseCount: 0,
     sourceBookIds: word.sourceBookIds,
+    reviewCount: 0,
+    overdueCount: 0,
+    isDifficult: false,
+    goalIds: [],
     updatedAt: timestamp
   };
 }
@@ -839,12 +888,181 @@ function emptyCoverage(goal: LearningGoal): PlanCoverageStatus {
   return {
     targetRequiredCount: goal.targetRequiredCount,
     availableWordCount: 0,
+    enabledWordCount: 0,
     assignedWordCount: 0,
     completedWordCount: 0,
+    reviewingWordCount: 0,
+    masteredWordCount: 0,
     inventoryGapCount: goal.targetRequiredCount,
     learningBacklogCount: 0,
     overdueReviewCount: 0
   };
+}
+
+function computeWordPriority(word: WordItem, goal: LearningGoal, progress?: WordProgress): number {
+  let score = word.priorityScore ?? 0;
+  const selectedIndex = word.sourceBookIds
+    .map((bookId) => goal.selectedBookIds.indexOf(bookId))
+    .filter((index) => index >= 0)
+    .sort((a, b) => a - b)[0];
+  if (selectedIndex !== undefined) {
+    score += Math.max(0, 100 - selectedIndex * 10);
+  }
+  if (word.stageHint === "foundation" && goal.needsFoundationRepair) {
+    score += 35;
+  }
+  if (word.stageHint === "core") {
+    score += 25;
+  }
+  if (word.tags.some((tag) => /核心|高频|core|high/i.test(tag))) {
+    score += 18;
+  }
+  if (word.tags.some((tag) => /基础|foundation/i.test(tag)) && goal.needsFoundationRepair) {
+    score += 14;
+  }
+  if (progress?.state === "not_started" || !progress) {
+    score += 5;
+  }
+  if (progress?.state === "mastered" || progress?.state === "excluded") {
+    score -= 1000;
+  }
+  return score;
+}
+
+function resolveDifficultFlag(progress: WordProgress, result: ReviewResult): boolean {
+  const nextLapses = progress.lapseCount + (result === "forgot" ? 1 : 0);
+  const nextOverdue = (progress.overdueCount ?? 0) + (result === "not_completed" ? 1 : 0);
+  if (nextLapses >= 2 || nextOverdue >= 2) {
+    return true;
+  }
+  return result === "forgot" || (progress.recentReviewResult === "vague" && result === "vague") || progress.isDifficult === true;
+}
+
+function resolveDifficultyReason(progress: WordProgress, result: ReviewResult): string | undefined {
+  if (result === "forgot") {
+    return "复习中选择“不认识”，标记为重点遗忘词";
+  }
+  if (progress.recentReviewResult === "vague" && result === "vague") {
+    return "连续两次复习结果为“模糊”";
+  }
+  if (((progress.overdueCount ?? 0) + (result === "not_completed" ? 1 : 0)) >= 2) {
+    return "多次逾期或未完成复习";
+  }
+  return progress.difficultyReason;
+}
+
+function buildStagePlans(
+  goal: LearningGoal,
+  plan: StudyPlan,
+  dailyTasks: DailyTaskSummary[],
+  asOfDate: LocalDateString,
+  timestamp: string
+): StagePlan[] {
+  const effectiveTasks = dailyTasks.filter((task) => !task.isRestDay);
+  if (effectiveTasks.length === 0) {
+    return [];
+  }
+  const stageDefs: Array<{ name: string; role: StagePlan["role"]; ratio: number; riskNote: string }> = [
+    { name: "基础补齐", role: "foundation", ratio: goal.needsFoundationRepair ? 0.35 : 0.2, riskNote: "优先处理基础词和历史待补学" },
+    { name: "目标核心", role: "core", ratio: 0.5, riskNote: "覆盖当前目标启用词书中的核心范围" },
+    { name: "复习冲刺", role: "sprint", ratio: goal.needsFoundationRepair ? 0.15 : 0.3, riskNote: "降低新词压力，集中处理复习和逾期" }
+  ];
+  let cursor = 0;
+  return stageDefs.map((stage, index) => {
+    const isLast = index === stageDefs.length - 1;
+    const length = isLast ? effectiveTasks.length - cursor : Math.max(1, Math.round(effectiveTasks.length * stage.ratio));
+    const segment = effectiveTasks.slice(cursor, Math.max(cursor + length, cursor + 1));
+    cursor += length;
+    const startDate = segment[0]?.date ?? asOfDate;
+    const endDate = segment[segment.length - 1]?.date ?? goal.deadline;
+    const plannedNewWordCount = sumTasks(segment, "boundNewWordCount");
+    const plannedReviewCount = sumTasks(segment, "plannedReviewCount");
+    const status = compareDates(endDate, asOfDate) < 0 ? "completed" : compareDates(startDate, asOfDate) <= 0 ? "active" : plan.feasibilityStatus === "infeasible" ? "atRisk" : "planned";
+    return {
+      id: `stage:${goal.id}:${index + 1}`,
+      goalId: goal.id,
+      goalVersionId: goal.activeGoalVersionId,
+      name: stage.name,
+      role: stage.role,
+      startDate,
+      endDate,
+      plannedNewWordCount,
+      plannedReviewCount,
+      targetBookIds: goal.selectedBookIds,
+      status,
+      riskNote: plan.coverage.inventoryGapCount > 0 ? `${stage.riskNote}；当前词库缺口 ${plan.coverage.inventoryGapCount}` : stage.riskNote,
+      createdAt: timestamp,
+      updatedAt: timestamp
+    };
+  });
+}
+
+function buildWeeklyReviewRecords(
+  goal: LearningGoal,
+  weeklyPlans: WeeklyPlanSummary[],
+  progress: WordProgress[],
+  plan: StudyPlan,
+  timestamp: string
+): WeeklyReviewRecord[] {
+  const difficultWordCount = progress.filter((item) => item.isDifficult).length;
+  const masteredWords = progress.filter((item) => item.state === "mastered").length;
+  return weeklyPlans.map((week, index) => {
+    const nextWeek = weeklyPlans[index + 1];
+    const load = week.plannedNewWords + week.plannedReviews;
+    const nextLoad = nextWeek ? nextWeek.plannedNewWords + nextWeek.plannedReviews : 0;
+    return {
+      id: `weekly-review:${goal.id}:${week.weekStart}`,
+      goalId: goal.id,
+      weekStart: week.weekStart,
+      weekEnd: week.weekEnd,
+      plannedNewWords: week.plannedNewWords,
+      actualNewWords: week.completedNewWords,
+      plannedReviews: week.plannedReviews,
+      actualReviews: week.completedReviews,
+      newLearningBacklog: week.backlogWords,
+      newOverdueReviews: week.overdueReviews,
+      newlyMasteredWords: masteredWords,
+      difficultWordCount,
+      inventoryGapChange: plan.coverage.inventoryGapCount,
+      nextWeekLoadChange: nextLoad - load,
+      status: plan.feasibilityStatus,
+      explanation: `本周计划新学 ${week.plannedNewWords}，实际 ${week.completedNewWords}；待补学 ${week.backlogWords}，逾期复习 ${week.overdueReviews}；下一周负荷变化 ${nextLoad - load}`,
+      createdAt: timestamp
+    };
+  });
+}
+
+function buildMonthlyReviewRecords(
+  goal: LearningGoal,
+  stagePlans: StagePlan[],
+  monthlyPlans: MonthlyPlanSummary[],
+  progress: WordProgress[],
+  plan: StudyPlan,
+  timestamp: string
+): MonthlyReviewRecord[] {
+  const masteredWords = progress.filter((item) => item.state === "mastered").length;
+  return monthlyPlans.map((month, index) => {
+    const stage = stagePlans.find((item) => month.month >= monthKey(item.startDate) && month.month <= monthKey(item.endDate)) ?? stagePlans[0];
+    const nextMonth = monthlyPlans[index + 1];
+    return {
+      id: `monthly-review:${goal.id}:${month.month}`,
+      goalId: goal.id,
+      month: month.month,
+      stageGoal: stage?.name ?? "长期目标推进",
+      plannedNewWords: month.plannedNewWords,
+      actualNewWords: month.completedNewWords,
+      plannedReviews: month.plannedReviews,
+      actualReviews: month.completedReviews,
+      masteredWords,
+      reviewPressure: month.plannedReviews,
+      importedWordCount: plan.coverage.enabledWordCount,
+      accumulatedBacklog: month.backlogWords,
+      longTermStatus: plan.feasibilityStatus,
+      nextMonthExpectedLoad: nextMonth ? nextMonth.plannedNewWords + nextMonth.plannedReviews : 0,
+      explanation: `${month.month} 阶段为 ${stage?.name ?? "长期目标推进"}，计划新学 ${month.plannedNewWords}，复习压力 ${month.plannedReviews}，累计待补学 ${month.backlogWords}`,
+      createdAt: timestamp
+    };
+  });
 }
 
 function summarizePlan(

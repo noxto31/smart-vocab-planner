@@ -1,7 +1,7 @@
 import "fake-indexeddb/auto";
 import { beforeEach, describe, expect, it } from "vitest";
 import { addDays, dateInTimezone } from "../src/domain/date";
-import { createBackupData, parseBackupData } from "../src/domain/backup";
+import { parseBackupData } from "../src/domain/backup";
 import type { BackupDataV1, DailyReviewAssignment, LearningGoal, WordItem, WordProgress } from "../src/domain/types";
 import {
   exportBackup,
@@ -290,11 +290,16 @@ describe("v0.2.1 服务层逐词操作与当日结算", () => {
     const today = todayDate();
     await seedNewWordPlan(10, { targetRequiredCount: 10, dailyNewWordLimit: 10, startDate: today, deadline: addDays(today, 5) });
     const backup = await exportBackup();
-    expect(backup.backupVersion).toBe("v0.2.1");
+    expect(backup.backupVersion).toBe("v0.3.0");
+    expect(backup.schemaVersion).toBe(3);
     await importBackup(JSON.stringify(backup));
     expect((await db.dailyNewAssignments.toArray()).length).toBeGreaterThan(0);
+    expect((await db.goalVersions.toArray()).length).toBeGreaterThan(0);
 
-    const v020 = createBackupData({
+    const v020 = {
+      schemaVersion: 2 as const,
+      backupVersion: "v0.2.0" as const,
+      exportedAt: "2026-06-01T00:00:00.000Z",
       goals: [makeGoal({ id: "goal:v020" })],
       wordBooks: [],
       words: [],
@@ -306,11 +311,14 @@ describe("v0.2.1 服务层逐词操作与当日结算", () => {
       reviewHistory: [],
       legacyProgressRecords: [],
       adjustmentLogs: []
-    });
-    const parsed020 = parseBackupData(JSON.stringify({ ...v020, backupVersion: "v0.2.0" }));
-    expect(parsed020.backupVersion).toBe("v0.2.0");
+    };
+    const parsed020 = parseBackupData(JSON.stringify(v020));
+    expect(parsed020.backupVersion).toBe("v0.3.0");
+    expect(parsed020.migrationMeta.sourceBackupVersion).toBe("v0.2.0");
 
     const parsed010 = parseBackupData(JSON.stringify(makeLegacyBackup()));
+    expect(parsed010.backupVersion).toBe("v0.3.0");
+    expect(parsed010.migrationMeta.sourceBackupVersion).toBe("v0.1.0");
     expect(parsed010.legacyProgressRecords[0].sourceVersion).toBe("v0.1.0");
     expect(dateInTimezone(new Date("2026-01-01T15:01:00.000Z"), "Asia/Tokyo")).toBe("2026-01-02");
   });

@@ -126,6 +126,11 @@ export function importWordsFromCsv(text: string, existingWords: WordItem[] = [])
         estimatedWordCount: 0,
         sourceDescription: "用户 CSV 导入",
         hasImportedWords: true,
+        status: "imported",
+        role: "custom",
+        priority: 50,
+        importedWordCount: 0,
+        duplicateWordCount: 0,
         recommendationTags: ["用户导入"],
         isFoundation: false,
         isTargetBook: true
@@ -141,6 +146,7 @@ export function importWordsFromCsv(text: string, existingWords: WordItem[] = [])
       sourceBookNames: [bookName],
       level: row[levelIndex]?.trim() || undefined,
       tags: (row[tagsIndex]?.split(/[;|，,\s]+/) ?? []).map((tag) => tag.trim()).filter(Boolean),
+      stageHint: inferStageHint(bookName, row[tagsIndex] ?? ""),
       createdAt: timestamp,
       updatedAt: timestamp
     });
@@ -149,7 +155,8 @@ export function importWordsFromCsv(text: string, existingWords: WordItem[] = [])
   const merged = mergeWordItems(existingWords, incomingWords);
   const bookList = Array.from(books.values()).map((book) => ({
     ...book,
-    estimatedWordCount: incomingWords.filter((word) => word.sourceBookIds.includes(book.id)).length
+    estimatedWordCount: incomingWords.filter((word) => word.sourceBookIds.includes(book.id)).length,
+    importedWordCount: incomingWords.filter((word) => word.sourceBookIds.includes(book.id)).length
   }));
 
   return {
@@ -216,6 +223,9 @@ export function mergeWordItems(existingWords: WordItem[], incomingWords: WordIte
       sourceBookNames: Array.from(new Set([...existing.sourceBookNames, ...incoming.sourceBookNames])),
       tags: Array.from(new Set([...existing.tags, ...incoming.tags])),
       level: existing.level || incoming.level,
+      stageHint: existing.stageHint ?? incoming.stageHint,
+      priorityScore: Math.max(existing.priorityScore ?? 0, incoming.priorityScore ?? 0),
+      priorityReasons: Array.from(new Set([...(existing.priorityReasons ?? []), ...(incoming.priorityReasons ?? [])])),
       updatedAt: nowIso()
     });
   });
@@ -225,6 +235,23 @@ export function mergeWordItems(existingWords: WordItem[], incomingWords: WordIte
     addedCount,
     duplicateCount
   };
+}
+
+function inferStageHint(bookName: string, rawTags: string): WordItem["stageHint"] {
+  const source = `${bookName} ${rawTags}`.toLowerCase();
+  if (/foundation|基础|cet4|四级/.test(source)) {
+    return "foundation";
+  }
+  if (/core|核心|cet6|六级|ielts|toefl|gre|雅思|托福/.test(source)) {
+    return "core";
+  }
+  if (/sprint|冲刺|high|高频/.test(source)) {
+    return "sprint";
+  }
+  if (/extend|扩展|强化/.test(source)) {
+    return "extension";
+  }
+  return "core";
 }
 
 function csvEscape(value: string): string {

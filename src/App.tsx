@@ -34,13 +34,13 @@ import {
 type TabId = "dashboard" | "goal" | "today" | "plans" | "books" | "stats" | "data";
 
 const tabs: Array<{ id: TabId; label: string }> = [
-  { id: "dashboard", label: "总览" },
-  { id: "goal", label: "目标设置" },
-  { id: "today", label: "今日学习" },
-  { id: "plans", label: "计划" },
-  { id: "books", label: "词书管理" },
-  { id: "stats", label: "统计" },
-  { id: "data", label: "数据管理" }
+  { id: "dashboard", label: "今日任务" },
+  { id: "goal", label: "目标与阶段计划" },
+  { id: "today", label: "背词执行" },
+  { id: "plans", label: "长期计划" },
+  { id: "books", label: "词书与词库" },
+  { id: "stats", label: "学习历史" },
+  { id: "data", label: "设置与数据" }
 ];
 
 const weekdays: Array<{ value: Weekday; label: string }> = [
@@ -103,7 +103,9 @@ function App() {
   const today = currentGoal ? todayInTimezone(currentGoal.timezone) : todayInTimezone();
   const latestPlan = data?.studyPlans[0] ?? null;
   const wordsById = useMemo(() => new Map((data?.words ?? []).map((word) => [word.id, word])), [data?.words]);
+  const progressByWord = useMemo(() => new Map((data?.wordProgress ?? []).map((progress) => [progress.wordId, progress])), [data?.wordProgress]);
   const currentGoalId = currentGoal?.id ?? "";
+  const currentStage = (data?.stagePlans ?? []).find((stage) => stage.goalId === currentGoalId && stage.status === "active") ?? (data?.stagePlans ?? []).find((stage) => stage.goalId === currentGoalId) ?? null;
   const todayNewAssignments = useMemo(
     () =>
       (data?.dailyNewAssignments ?? []).filter(
@@ -156,7 +158,7 @@ function App() {
     await runAction(async () => {
       const savedGoal = await saveGoal({ ...goalForm, updatedAt: nowIso() });
       const asOfDate = compareDates(savedGoal.startDate, today) > 0 ? savedGoal.startDate : todayInTimezone(savedGoal.timezone);
-      await generateAndSavePlan(savedGoal, asOfDate, currentGoal ? "goal_change" : "initial", "保存目标后生成 v0.2.1 具体单词计划");
+      await generateAndSavePlan(savedGoal, asOfDate, currentGoal ? "goal_change" : "initial", "保存目标后生成 v0.3.0 具体单词计划");
     }, "目标已保存，具体单词计划已生成");
   };
 
@@ -164,7 +166,7 @@ function App() {
     await runAction(async () => {
       const suggestion = await analyzeNaturalLanguageGoal(naturalGoalText);
       setAiSuggestion(suggestion);
-    }, "已生成本地 mock AI 规划建议");
+    }, "已生成本地规则规划建议");
   };
 
   const applyAiSuggestion = () => {
@@ -176,9 +178,12 @@ function App() {
       goalInputMode: "natural_language",
       originalGoalText: naturalGoalText,
       interpretedGoal: aiSuggestion.interpretedGoal,
+      targetDescription: aiSuggestion.interpretedGoal,
       targetType: aiSuggestion.targetType,
       targetRequiredCount: aiSuggestion.suggestedTargetWordCount,
+      needsFoundationRepair: aiSuggestion.suggestedStages.some((stage) => stage.role === "foundation" && stage.suggestedWordCount > 0),
       allowBookRecommendation: true,
+      aiPlanningEnabled: true,
       updatedAt: nowIso()
     });
     setMessage("AI 建议已填入表单，需点击“保存并生成计划”后才会改变执行目标");
@@ -234,8 +239,8 @@ function App() {
       const backup = await exportBackup();
       const text = JSON.stringify(backup, null, 2);
       setBackupText(text);
-      downloadText("smart-vocab-planner-v0.2.1-backup.json", text, "application/json");
-    }, "v0.2.1 完整备份已生成");
+      downloadText("smart-vocab-planner-v0.3.0-backup.json", text, "application/json");
+    }, "v0.3.0 完整备份已生成");
   };
 
   const handleImportBackup = async () => {
@@ -290,11 +295,19 @@ function App() {
             </div>
 
             <div className="two-column">
-              <Panel title="今日任务">
+            <Panel title="今日任务">
+                <dl className="info-list">
+                  <div><dt>当前目标</dt><dd>{currentGoal ? TARGET_LABELS[currentGoal.targetType] : "尚未创建"}</dd></div>
+                  <div><dt>当前阶段</dt><dd>{currentStage ? `${currentStage.name}：${currentStage.riskNote}` : "尚未生成阶段计划"}</dd></div>
+                  <div><dt>最近调整</dt><dd>{data?.adjustmentLogs[0]?.reason ?? "暂无调整"}</dd></div>
+                </dl>
                 <div className="task-grid">
                   <MetricCard label="计划新词" value={todayTask?.plannedNewWordCount ?? todayNewAssignments.length} />
                   <MetricCard label="已绑定新词" value={todayTask?.boundNewWordCount ?? todayNewAssignments.length} />
                   <MetricCard label="计划复习" value={todayTask?.plannedReviewCount ?? todayReviewAssignments.length} />
+                  <MetricCard label="仍未处理" value={todayPendingNew + todayPendingReviews} />
+                  <MetricCard label="历史待补学" value={latestPlan?.coverage.learningBacklogCount ?? 0} />
+                  <MetricCard label="历史逾期复习" value={latestPlan?.coverage.overdueReviewCount ?? 0} />
                   <MetricCard label="容量状态" value={todayTask?.capacityStatus ?? "ok"} />
                 </div>
                 <div className="action-row">
@@ -333,7 +346,7 @@ function App() {
                 </label>
               </div>
               <div className="action-row">
-                <button type="button" className="secondary" onClick={handleNaturalGoal}>生成 AI mock 建议</button>
+                <button type="button" className="secondary" onClick={handleNaturalGoal}>生成规划建议</button>
                 <button type="button" onClick={applyAiSuggestion} disabled={!aiSuggestion}>应用到目标表单</button>
               </div>
               {aiSuggestion && (
@@ -344,6 +357,11 @@ function App() {
                     columns={["阶段", "目的", "建议词量"]}
                     rows={aiSuggestion.suggestedStages.map((stage) => [stage.name, stage.purpose, stage.suggestedWordCount])}
                   />
+                  <DataTable
+                    columns={["词书类别", "角色", "是否已有词条", "导入要求"]}
+                    rows={aiSuggestion.recommendedBookCategories.map((book) => [book.name, book.role, book.hasExecutableWords ? "是" : "否", book.importRequirement ?? "需要导入后排期"])}
+                  />
+                  {aiSuggestion.validationErrors && aiSuggestion.validationErrors.length > 0 && <p className="muted">本地校验：{aiSuggestion.validationErrors.join("；")}</p>}
                 </div>
               )}
             </Panel>
@@ -367,6 +385,10 @@ function App() {
                 <label>
                   目标需求词量
                   <input min={1} type="number" value={goalForm.targetRequiredCount} onChange={(event) => setGoalForm({ ...goalForm, targetRequiredCount: Number(event.target.value) })} />
+                </label>
+                <label>
+                  当前基础说明
+                  <input value={goalForm.foundationDescription ?? ""} onChange={(event) => setGoalForm({ ...goalForm, foundationDescription: event.target.value })} />
                 </label>
                 <label>
                   每日新词上限
@@ -400,6 +422,17 @@ function App() {
                   </label>
                 ))}
               </fieldset>
+              <fieldset className="check-row">
+                <legend>规划选项</legend>
+                <label>
+                  <input type="checkbox" checked={goalForm.needsFoundationRepair ?? false} onChange={() => setGoalForm({ ...goalForm, needsFoundationRepair: !(goalForm.needsFoundationRepair ?? false) })} />
+                  需要补基础词
+                </label>
+                <label>
+                  <input type="checkbox" checked={goalForm.aiPlanningEnabled ?? true} onChange={() => setGoalForm({ ...goalForm, aiPlanningEnabled: !(goalForm.aiPlanningEnabled ?? true) })} />
+                  启用 AI 辅助规划接口
+                </label>
+              </fieldset>
             </Panel>
 
             <Panel title="词书范围">
@@ -422,6 +455,32 @@ function App() {
               <button type="submit">保存并生成计划</button>
               <button type="button" className="secondary" onClick={() => void runAction(async () => { await loadDemoDataset(); await createDemoGoalAndPlan(); }, "演示目标和具体单词计划已创建")}>创建演示目标</button>
             </div>
+
+            <Panel title="目标版本历史">
+              <DataTable
+                columns={["时间", "原因", "词量变化", "词书范围"]}
+                rows={(data?.goalVersions ?? []).filter((item) => item.goalId === currentGoalId).map((item) => [
+                  new Date(item.createdAt).toLocaleString("zh-CN"),
+                  item.reason,
+                  `${item.previousTargetRequiredCount ?? "-"} -> ${item.nextTargetRequiredCount}`,
+                  item.nextSelectedBookIds.join(" / ") || "全部已导入词"
+                ])}
+              />
+            </Panel>
+
+            <Panel title="阶段计划">
+              <DataTable
+                columns={["阶段", "日期", "新词", "复习", "状态", "说明"]}
+                rows={(data?.stagePlans ?? []).filter((item) => item.goalId === currentGoalId).map((stage) => [
+                  stage.name,
+                  `${stage.startDate} 至 ${stage.endDate}`,
+                  stage.plannedNewWordCount,
+                  stage.plannedReviewCount,
+                  stage.status,
+                  stage.riskNote
+                ])}
+              />
+            </Panel>
           </form>
         )}
 
@@ -458,6 +517,7 @@ function App() {
               <ReviewList
                 assignments={todayReviewAssignments}
                 wordsById={wordsById}
+                progressByWord={progressByWord}
                 revealed={revealedReviews}
                 onReveal={(id) => setRevealedReviews((value) => new Set(value).add(id))}
                 onResult={handleReviewResult}
@@ -475,6 +535,8 @@ function App() {
                   <div><dt>可供给词量</dt><dd>{latestPlan.coverage.availableWordCount}</dd></div>
                   <div><dt>已绑定计划量</dt><dd>{latestPlan.coverage.assignedWordCount}</dd></div>
                   <div><dt>实际完成量</dt><dd>{latestPlan.coverage.completedWordCount}</dd></div>
+                  <div><dt>复习中词量</dt><dd>{latestPlan.coverage.reviewingWordCount}</dd></div>
+                  <div><dt>已掌握词量</dt><dd>{latestPlan.coverage.masteredWordCount}</dd></div>
                   <div><dt>词库供给缺口</dt><dd>{latestPlan.coverage.inventoryGapCount}</dd></div>
                   <div><dt>学习欠缺任务</dt><dd>{latestPlan.coverage.learningBacklogCount}</dd></div>
                   <div><dt>逾期复习任务</dt><dd>{latestPlan.coverage.overdueReviewCount}</dd></div>
@@ -485,14 +547,21 @@ function App() {
             <div className="two-column">
               <Panel title="月度计划">
                 <DataTable
-                  columns={["月份", "新学", "复习", "补学", "逾期"]}
-                  rows={buildMonthlyRows(goalTasks).map((row) => [row.month, row.newCount, row.reviewCount, row.backlogCount, row.overdueCount])}
+                  columns={["月份", "阶段", "新学", "复习", "补学", "长期状态"]}
+                  rows={(data?.monthlyReviews ?? []).filter((item) => item.goalId === currentGoalId).map((row) => [row.month, row.stageGoal, row.plannedNewWords, row.plannedReviews, row.accumulatedBacklog, row.longTermStatus])}
                 />
               </Panel>
               <Panel title="周度计划">
                 <DataTable
-                  columns={["周起始", "新学", "复习", "补学", "逾期"]}
-                  rows={buildWeeklyRows(goalTasks).map((row) => [row.weekStart, row.newCount, row.reviewCount, row.backlogCount, row.overdueCount])}
+                  columns={["周起始", "新学计划/实际", "复习计划/实际", "补学", "逾期", "负荷变化"]}
+                  rows={(data?.weeklyReviews ?? []).filter((item) => item.goalId === currentGoalId).map((row) => [
+                    row.weekStart,
+                    `${row.plannedNewWords} / ${row.actualNewWords}`,
+                    `${row.plannedReviews} / ${row.actualReviews}`,
+                    row.newLearningBacklog,
+                    row.newOverdueReviews,
+                    row.nextWeekLoadChange
+                  ])}
                 />
               </Panel>
             </div>
@@ -533,11 +602,13 @@ function App() {
 
             <Panel title="词书推荐与可执行状态">
               <DataTable
-                columns={["词书", "状态", "真实词数", "推荐理由"]}
+                columns={["词书", "状态", "角色", "真实词数", "排期条件", "推荐理由"]}
                 rows={recommendations.map((item) => [
                   item.book.name,
-                  (item.book.actualWordCount ?? 0) > 0 ? "已导入可排期词书" : "推荐但未导入词书",
-                  item.book.actualWordCount ?? 0,
+                  item.status,
+                  item.suggestedStagePosition,
+                  item.expectedIndependentWordCount,
+                  item.importRequirement,
                   item.reasons.join("；")
                 ])}
               />
@@ -557,9 +628,10 @@ function App() {
 
             <Panel title="已导入词书">
               <DataTable
-                columns={["词书", "目标", "难度", "真实去重词数", "来源"]}
+                columns={["词书", "状态", "目标", "难度", "真实去重词数", "来源"]}
                 rows={(data?.wordBooks ?? []).map((book) => [
                   book.name,
+                  book.status ?? "recommended",
                   book.targetType,
                   book.difficulty,
                   book.actualWordCount ?? 0,
@@ -584,6 +656,32 @@ function App() {
               <DataTable
                 columns={["日期", "新词完成", "复习完成", "补学", "逾期"]}
                 rows={goalTasks.map((task) => [task.date, task.completedNewWordCount, task.completedReviewCount, task.learningBacklogCount, task.overdueReviewCount])}
+              />
+            </Panel>
+            <Panel title="词条学习历史">
+              <DataTable
+                columns={["单词", "状态", "首次学习", "复习次数", "最近结果", "下一次复习", "重点"]}
+                rows={(data?.wordProgress ?? []).map((progress) => {
+                  const word = wordsById.get(progress.wordId);
+                  return [
+                    word?.word ?? progress.wordId,
+                    progress.state,
+                    progress.firstLearnedDate ?? "-",
+                    progress.reviewCount ?? 0,
+                    progress.recentReviewResult ?? "-",
+                    progress.nextReviewDate ?? "-",
+                    progress.isDifficult ? progress.difficultyReason ?? "重点遗忘词" : "-"
+                  ];
+                })}
+              />
+            </Panel>
+            <Panel title="复习历史">
+              <DataTable
+                columns={["日期", "单词", "阶段", "结果"]}
+                rows={(data?.reviewHistory ?? []).map((record) => {
+                  const word = wordsById.get(record.wordId);
+                  return [record.date, word?.word ?? record.wordId, record.reviewStage + 1, reviewLabels[record.result]];
+                })}
               />
             </Panel>
             <Panel title="v0.1.0 历史数量记录">
@@ -613,8 +711,8 @@ function App() {
               </button>
             </div>
             <Panel title="备份 JSON">
-              <p className="muted">v0.2.1 备份包含具体新词任务、复习任务、学习状态、调整日志和旧版数量记录。</p>
-              <textarea rows={18} value={backupText} onChange={(event) => setBackupText(event.target.value)} placeholder="导出的备份会显示在这里，也可以粘贴 v0.1.0、v0.2.0 或 v0.2.1 备份 JSON 后导入" />
+              <p className="muted">v0.3.0 备份包含目标历史、阶段计划、词书状态、具体任务、学习历史、复盘、AI 建议记录、调整日志和旧版数量记录。</p>
+              <textarea rows={18} value={backupText} onChange={(event) => setBackupText(event.target.value)} placeholder="导出的备份会显示在这里，也可以粘贴 v0.1.0、v0.2.0、v0.2.1 或 v0.3.0 备份 JSON 后导入" />
             </Panel>
           </section>
         )}
@@ -658,6 +756,7 @@ function AssignmentList(props: {
 function ReviewList(props: {
   assignments: DailyReviewAssignment[];
   wordsById: Map<string, WordItem>;
+  progressByWord: Map<string, { firstLearnedDate?: string; reviewCount?: number; recentReviewResult?: ReviewResult; nextReviewDate?: string; lapseCount: number; state: string }>;
   revealed: Set<string>;
   onReveal: (assignmentId: string) => void;
   onResult: (assignmentId: string, result: ReviewResult) => Promise<void>;
@@ -669,13 +768,16 @@ function ReviewList(props: {
     <div className="card-list">
       {props.assignments.map((assignment) => {
         const word = props.wordsById.get(assignment.wordId);
+        const progress = props.progressByWord.get(assignment.wordId);
         const revealed = props.revealed.has(assignment.id);
         return (
           <article className="word-card" key={assignment.id}>
             <div>
               <strong>{word?.word ?? assignment.wordId}</strong>
               <p>{revealed ? word?.meaning || "暂无释义" : "释义已隐藏"}</p>
-              <small>复习阶段 {assignment.reviewStage + 1} · {assignment.status}</small>
+              <small>
+                复习阶段 {assignment.reviewStage + 1} · {assignment.status} · 首学 {progress?.firstLearnedDate ?? "-"} · 已复习 {progress?.reviewCount ?? 0} 次 · 最近 {progress?.recentReviewResult ?? "-"} · 下次 {progress?.nextReviewDate ?? "-"} · 遗忘 {progress?.lapseCount ?? 0}
+              </small>
             </div>
             <div className="button-strip">
               {!revealed && <button type="button" className="secondary" onClick={() => props.onReveal(assignment.id)}>查看释义</button>}
@@ -701,17 +803,22 @@ function createDefaultGoal(): UserGoal {
     goalInputMode: "structured",
     targetType: "CET4",
     interpretedGoal: "结构化目标",
+    targetDescription: "结构化目标",
+    foundationDescription: "",
+    needsFoundationRepair: false,
     startDate,
     deadline: addDays(startDate, 90),
     targetRequiredCount: 300,
     dailyNewWordLimit: 30,
     dailyReviewLimit: 120,
+    studyDaysPerWeek: 6,
     restWeekdays: [0],
     bufferDayRatio: 0.1,
     planStyle: "steady",
     timezone,
     selectedBookIds: [],
     allowBookRecommendation: true,
+    aiPlanningEnabled: true,
     createdAt: timestamp,
     updatedAt: timestamp
   };
