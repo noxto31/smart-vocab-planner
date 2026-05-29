@@ -1,5 +1,31 @@
 # WORKLOG
 
+## 2026-05-30 - v0.4.0 启动与基线核查
+
+### 远程与发布状态
+
+- 当前仓库：`https://github.com/noxto31/smart-vocab-planner.git`。
+- 当前默认主分支：`master`，本地执行 `git pull origin master` 后显示 `Already up to date`。
+- 本轮开发分支：`codex/v0.4.0-dynamic-recovery-calendar-ui`。
+- `master` 当前 commit：`f88b103a5a8a2addb823d86dffd2a96d76b6edf7`。
+- `v0.3.0` 为 annotated tag，`v0.3.0^{commit}` 指向：`f88b103a5a8a2addb823d86dffd2a96d76b6edf7`。
+- GitHub Release 页面已核对存在 `v0.3.0 - 智能背词规划与数据一致性正式版`，发布提交为 `f88b103`。
+- 本机无 `gh` CLI，后续若无法自动创建 v0.4.0 Release，将生成 `docs/v0.4.0_release_notes.md` 并说明需手动发布。
+
+### v0.3.0 基线确认
+
+- 已实际读取 `package.json`、`README.md`、`CHANGELOG.md`、`WORKLOG.md`、`docs/`、`src/` 和 `tests/`。
+- 当前 `src/domain/scheduler.ts` 已包含具体单词新词任务、具体复习任务、词库缺口、学习待补、逾期复习、阶段计划、周度复盘和月度复盘。
+- 当前 `src/services/plannerService.ts` 已包含逐词保存、主动结算、跨日自动结算、备份导入导出、目标版本和本地规则式 AI 建议。
+- 当前测试包含 `scheduler.test.ts`、`serviceSettlement.test.ts`、`importBackup.test.ts` 和 `v030Acceptance.test.ts`，覆盖 v0.3.0 核心回归。
+- 本轮开始前工作区存在未跟踪文件 `smart-vocab-planner-0.3.0.zip`，本轮不纳入修改。
+
+### 本轮范围冻结
+
+- 版本号更新为 `0.4.0`。
+- 本轮只处理动态进度恢复、计划视图重构和中文产品用词统一。
+- 不扩充真实词书库，不接入真实 AI API，不新增发音、例句、拼写训练、登录、云同步或移动端发布。
+
 ## 2026-05-29 - v0.3.0 启动与设计冻结
 
 ### 远程状态核对
